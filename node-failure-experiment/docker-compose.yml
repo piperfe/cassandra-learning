@@ -1,0 +1,109 @@
+# docker-compose.yml
+# Docker Compose configuration for Node Failure Experiment
+name: cassandra-node-failure
+services:
+  cassandra-node1:
+    image: cassandra:5.0.6
+    container_name: cassandra-node1
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MyCassandraCluster
+      - CASSANDRA_NUM_TOKENS=32
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=128M
+    ports:
+      - "9042:9042" # CQL port
+    volumes:
+      - cassandra_data1:/var/lib/cassandra
+      - ./logback-debug.xml:/etc/cassandra/logback.xml
+    restart: "no"
+    healthcheck:
+      # Check that node is UN (Up Normal, not UJ/Joining) AND bootstrap is completed
+      test: ["CMD-SHELL", "nodetool status 2>/dev/null | grep -q '^UN' && nodetool info 2>/dev/null | grep -qi 'Bootstrap.*completed' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+  cassandra-node2:
+    image: cassandra:5.0.6
+    container_name: cassandra-node2
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MyCassandraCluster
+      - CASSANDRA_SEEDS=cassandra-node1 # Seed node for the cluster
+      - CASSANDRA_NUM_TOKENS=32
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=128M
+    volumes:
+      - cassandra_data2:/var/lib/cassandra
+      - ./logback-debug.xml:/etc/cassandra/logback.xml
+    restart: "no"
+    depends_on:
+      cassandra-node1:
+        condition: service_healthy
+    healthcheck:
+      # Check that node is UN (Up Normal, not UJ/Joining) AND bootstrap is completed
+      # This ensures Node3 waits for Node2 to fully complete bootstrap before starting
+      test: ["CMD-SHELL", "nodetool status 2>/dev/null | grep -q '^UN' && nodetool info 2>/dev/null | grep -qi 'Bootstrap.*completed' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+  cassandra-node3:
+    image: cassandra:5.0.6
+    container_name: cassandra-node3
+    environment:
+      - CASSANDRA_CLUSTER_NAME=MyCassandraCluster
+      - CASSANDRA_SEEDS=cassandra-node1 # Seed node for the cluster
+      - CASSANDRA_NUM_TOKENS=32
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - MAX_HEAP_SIZE=256M
+      - HEAP_NEWSIZE=128M
+    volumes:
+      - cassandra_data3:/var/lib/cassandra
+      - ./logback-debug.xml:/etc/cassandra/logback.xml
+    restart: "no"
+    depends_on:
+      cassandra-node2:
+        condition: service_healthy
+    healthcheck:
+      # Check that node is UN (Up Normal, not UJ/Joining) AND bootstrap is completed
+      # This ensures the experiment waits for Node3 to fully complete bootstrap before starting
+      test: ["CMD-SHELL", "nodetool status 2>/dev/null | grep -q '^UN' && nodetool info 2>/dev/null | grep -qi 'Bootstrap.*completed' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+  experiment:
+    image: python:3.11
+    container_name: node-failure-experiment
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - CASSANDRA_CONTACT_POINTS=cassandra-node1,cassandra-node2,cassandra-node3
+      - CASSANDRA_PORT=9042
+      - CASSANDRA_KEYSPACE=experiment_rf1
+      - LOG_LEVEL=INFO
+    depends_on:
+      cassandra-node3:
+        condition: service_healthy
+    command: >
+      bash -c "
+        apt-get update -qq && 
+        apt-get install -y -qq docker.io > /dev/null 2>&1 && 
+        pip install -q cassandra-driver mmh3 && 
+        python node_failure_experiment.py
+      "
+volumes:
+  cassandra_data1:
+  cassandra_data2:
+  cassandra_data3:
+
