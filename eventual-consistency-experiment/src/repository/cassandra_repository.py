@@ -246,6 +246,46 @@ def query_data(session, table_name, record_id, keyspace=None, consistency_level=
     return None
 
 
+def get_partition_token(session, keyspace, table_name, partition_key):
+    """
+    Get the partition token for a given partition key
+    
+    Args:
+        session: Cassandra session
+        keyspace: Keyspace name
+        table_name: Name of the table
+        partition_key: Partition key value to get token for
+    
+    Returns:
+        Token value (int) if found, None if not found or error occurred
+    """
+    try:
+        full_table_name = f"{keyspace}.{table_name}"
+        token_query = f"SELECT token(id) as token_value FROM {full_table_name} WHERE id = %s"
+        
+        log_cql_query(token_query, (partition_key,))
+        result = session.execute(token_query, (partition_key,))
+        rows = list(result)
+        
+        if rows:
+            logging.info(f"CQL Result (SELECT TOKEN): {len(rows)} row(s) returned")
+            for idx, row in enumerate(rows):
+                if hasattr(row, '_fields'):
+                    row_dict = {field: getattr(row, field) for field in row._fields}
+                    logging.info(f"  Row {idx + 1}: {row_dict}")
+                else:
+                    logging.info(f"  Row {idx + 1}: {row}")
+            
+            token_value = rows[0].token_value
+            logging.info(f"Token value from query for key '{partition_key}': {token_value}")
+            return token_value
+        
+        return None
+    except Exception as e:
+        logging.warning(f"Could not get token via query: {e}")
+        return None
+
+
 def refresh_metadata(cluster, keyspace=None):
     """
     Refresh cluster metadata

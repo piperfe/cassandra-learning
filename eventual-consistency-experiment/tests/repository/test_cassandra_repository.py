@@ -8,7 +8,7 @@ testing CQL query logging and other repository functions.
 
 import logging
 from datetime import datetime
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 
 # Import the module under test
@@ -18,6 +18,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.repository.cassandra_repository import (
     log_cql_query,
+    get_partition_token,
 )
 
 
@@ -178,4 +179,268 @@ class TestBugMagnetSessionCqlQuery:
         # Verify all params are in the logged query
         for i in range(50):
             assert f"param{i}" in caplog.text
+
+
+# ============================================================================
+# Test: get_partition_token
+# ============================================================================
+
+class TestGetPartitionToken:
+    """Tests for get_partition_token function"""
+    
+    def test_returns_token_value_when_partition_key_found(self, caplog):
+        """returns token value when partition key is found"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 123456789
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result == 123456789
+        assert "Token value from query for key 'test-key': 123456789" in caplog.text
+        assert "CQL Result (SELECT TOKEN): 1 row(s) returned" in caplog.text
+        mock_session.execute.assert_called_once()
+    
+    def test_returns_none_when_partition_key_not_found(self, caplog):
+        """returns None when partition key is not found"""
+        mock_session = MagicMock()
+        mock_session.execute.return_value = []
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result is None
+        mock_session.execute.assert_called_once()
+    
+    def test_returns_none_when_exception_occurs(self, caplog):
+        """returns None when exception occurs during query execution"""
+        mock_session = MagicMock()
+        mock_session.execute.side_effect = Exception("Connection error")
+        
+        with caplog.at_level(logging.WARNING):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result is None
+        assert "Could not get token via query" in caplog.text
+        assert "Connection error" in caplog.text
+    
+    def test_logs_query_with_keyspace_and_table_when_executed(self, caplog):
+        """logs CQL query with keyspace.table format when executed"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 987654321
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            get_partition_token(mock_session, "my_keyspace", "my_table", "my-key")
+        
+        assert "CQL Query: SELECT token(id) as token_value FROM my_keyspace.my_table WHERE id = 'my-key'" in caplog.text
+    
+    def test_logs_row_details_with_token_value_when_found(self, caplog):
+        """logs row details with token value when token is found"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 555666777
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert "Row 1:" in caplog.text
+        assert "token_value" in caplog.text
+        assert "555666777" in caplog.text
+    
+    def test_returns_token_value_when_row_lacks_fields_attribute(self, caplog):
+        """returns token value when row object lacks _fields attribute"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 111222333
+        del mock_row._fields
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result == 111222333
+        assert "Row 1:" in caplog.text
+    
+    def test_returns_token_value_for_empty_string_partition_key(self, caplog):
+        """returns token value for empty string partition key"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 0
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "")
+        
+        assert result == 0
+        assert "Token value from query for key '': 0" in caplog.text
+    
+    def test_returns_token_value_for_unicode_partition_key(self, caplog):
+        """returns token value for unicode partition key"""
+        unicode_key = "测试-key-测试"
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 999888777
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", unicode_key)
+        
+        assert result == 999888777
+        assert unicode_key in caplog.text
+    
+    def test_returns_first_token_value_when_multiple_rows_found(self, caplog):
+        """returns first token value when multiple rows are found"""
+        mock_session = MagicMock()
+        mock_row1 = MagicMock()
+        mock_row1.token_value = 111111111
+        mock_row1._fields = ['token_value']
+        mock_row2 = MagicMock()
+        mock_row2.token_value = 222222222
+        mock_row2._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row1, mock_row2]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result == 111111111
+        assert "CQL Result (SELECT TOKEN): 2 row(s) returned" in caplog.text
+    
+    def test_returns_token_value_for_single_character_partition_key(self, caplog):
+        """returns token value for single character partition key"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 12345
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "a")
+        
+        assert result == 12345
+        assert "Token value from query for key 'a': 12345" in caplog.text
+    
+    def test_returns_token_value_for_very_long_partition_key(self, caplog):
+        """returns token value for very long partition key (10000+ characters)"""
+        very_long_key = "x" * 10000
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 999999999
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", very_long_key)
+        
+        assert result == 999999999
+        mock_session.execute.assert_called_once()
+        call_args = mock_session.execute.call_args
+        assert len(call_args[0]) == 2  # query and params tuple
+        assert call_args[0][1][0] == very_long_key  # Check the parameter
+    
+    def test_returns_token_value_for_whitespace_only_partition_key(self, caplog):
+        """returns token value for whitespace-only partition key"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 444555666
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "   ")
+        
+        assert result == 444555666
+    
+    def test_returns_token_value_for_partition_key_with_sql_injection_pattern(self, caplog):
+        """returns token value for partition key containing SQL injection pattern"""
+        sql_injection_key = "'; DROP TABLE test_data; --"
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 777888999
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", sql_injection_key)
+        
+        assert result == 777888999
+        # Verify parameterized query is used (safe)
+        call_args = mock_session.execute.call_args
+        assert len(call_args[0]) == 2  # query and params tuple
+    
+    def test_returns_token_value_for_partition_key_with_special_characters(self, caplog):
+        """returns token value for partition key with special characters"""
+        special_chars_key = "key-with'special\"chars&symbols"
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 333444555
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", special_chars_key)
+        
+        assert result == 333444555
+    
+    def test_returns_zero_token_value_when_token_is_zero(self, caplog):
+        """returns zero token value when token value is zero"""
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = 0
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result == 0
+        assert "Token value from query for key 'test-key': 0" in caplog.text
+    
+    def test_returns_very_large_token_value_when_found(self, caplog):
+        """returns very large token value when found"""
+        very_large_token = 9223372036854775807  # max 64-bit signed int
+        mock_session = MagicMock()
+        mock_row = MagicMock()
+        mock_row.token_value = very_large_token
+        mock_row._fields = ['token_value']
+        mock_session.execute.return_value = [mock_row]
+        
+        with caplog.at_level(logging.INFO):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result == very_large_token
+        assert f"Token value from query for key 'test-key': {very_large_token}" in caplog.text
+    
+    def test_returns_none_when_connection_exception_occurs(self, caplog):
+        """returns None when connection exception occurs"""
+        mock_session = MagicMock()
+        mock_session.execute.side_effect = ConnectionError("Connection failed")
+        
+        with caplog.at_level(logging.WARNING):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result is None
+        assert "Could not get token via query" in caplog.text
+        assert "Connection failed" in caplog.text
+    
+    def test_returns_none_when_timeout_exception_occurs(self, caplog):
+        """returns None when timeout exception occurs"""
+        mock_session = MagicMock()
+        mock_session.execute.side_effect = TimeoutError("Query timeout")
+        
+        with caplog.at_level(logging.WARNING):
+            result = get_partition_token(mock_session, "test_keyspace", "test_table", "test-key")
+        
+        assert result is None
+        assert "Could not get token via query" in caplog.text
+        assert "Query timeout" in caplog.text
 

@@ -32,8 +32,9 @@ from src.repository.cassandra_repository import (
     insert_data,
     query_data,
     refresh_metadata,
-    log_cql_query,
 )
+
+from src.application.replica_resolver import get_replica_nodes
 
 
 def setup_logging():
@@ -72,96 +73,40 @@ def wait_for_cluster(cluster, expected_nodes=3, max_wait=120):
     return False
 
 
-def get_replica_nodes(cluster, session, keyspace, partition_key, table_name="test_data"):
-    """Get the nodes that hold replicas for a given partition key"""
-    try:
-        # Check if keyspace exists in cluster metadata
-        if keyspace not in cluster.metadata.keyspaces:
-            logging.error(f"Keyspace '{keyspace}' not found in cluster metadata")
-            return []
-        
-        # Calculate token using both methods for comparison
-        token_value_query = None
-        token_value_mmh3 = None
-        
-        # Method 1: Get token via query (preferred method)
-        try:
-            # Query the token from the table using the partition key
-            # CQL requires a FROM clause, so we query from the actual table
-            token_query = f"SELECT token(id) as token_value FROM {keyspace}.{table_name} WHERE id = %s"
-            log_cql_query(token_query, (partition_key,))
-            result = session.execute(token_query, (partition_key,))
-            rows = list(result)
-            if rows:
-                logging.info(f"CQL Result (SELECT TOKEN): {len(rows)} row(s) returned")
-                for idx, row in enumerate(rows):
-                    if hasattr(row, '_fields'):
-                        row_dict = {field: getattr(row, field) for field in row._fields}
-                        logging.info(f"  Row {idx + 1}: {row_dict}")
-                    else:
-                        logging.info(f"  Row {idx + 1}: {row}")
-                token_value_query = rows[0].token_value
-                logging.info(f"Token value from query for key '{partition_key}': {token_value_query}")
-        except Exception as e:
-            logging.warning(f"Could not get token via query: {e}")
-        
-        # Method 2: Calculate token using mmh3 algorithm (for comparison)
-        partitioner = cluster.metadata.partitioner
-        if 'Murmur3' in partitioner:
-            try:
-                import mmh3
-                token_value_mmh3 = mmh3.hash(partition_key.encode('utf-8'), signed=False)
-                logging.info(f"Token value from mmh3 algorithm for key '{partition_key}': {token_value_mmh3}")
-            except ImportError:
-                logging.warning("mmh3 library not available for token calculation")
-            except Exception as e:
-                logging.warning(f"Error calculating token with mmh3: {e}")
-        else:
-            logging.warning(f"Partitioner '{partitioner}' is not Murmur3, skipping mmh3 calculation")
-        
-        # Compare the two methods
-        logging.info("=" * 60)
-        logging.info("Token Calculation Comparison:")
-        logging.info(f"  Query method:    {token_value_query if token_value_query is not None else 'FAILED'}")
-        logging.info(f"  mmh3 algorithm:   {token_value_mmh3 if token_value_mmh3 is not None else 'FAILED'}")
-        if token_value_query is not None and token_value_mmh3 is not None:
-            if token_value_query == token_value_mmh3:
-                logging.info(f"  ✓ Both methods match: {token_value_query}")
-            else:
-                diff = abs(token_value_query - token_value_mmh3)
-                logging.warning(f"  ⚠ Methods differ by: {diff}")
-                logging.warning(f"     Query: {token_value_query}, mmh3: {token_value_mmh3}")
-        logging.info("=" * 60)
-        
-        # Use query result if available, otherwise use mmh3
-        if token_value_query is not None:
-            token_value = token_value_query
-            logging.info(f"Using token from query method: {token_value}")
-        elif token_value_mmh3 is not None:
-            token_value = token_value_mmh3
-            logging.info(f"Using token from mmh3 algorithm (fallback): {token_value}")
-        else:
-            logging.error("Both token calculation methods failed")
-            return []
-        
-        token_map = cluster.metadata.token_map
-        if not token_map:
-            logging.error("Token map not available")
-            return []
-        
-        # Create token object
-        from cassandra.metadata import Murmur3Token
-        token = Murmur3Token(token_value)
-        
-        # Get replicas for this token
-        replicas = list(token_map.get_replicas(keyspace, token))
-        
-        return [r.address for r in replicas]
-    except Exception as e:
-        logging.error(f"Error getting replica nodes: {e}")
-        import traceback
-        logging.info(traceback.format_exc())
-        return []
+def report_experiment_results(keyspace, test_id, replica_node, container_to_stop, data_found, data_found_after_restart):
+    """Report the results of the node failure experiment"""
+    logging.info("\n" + "=" * 80)
+    logging.info("EXPERIMENT RESULTS")
+    logging.info("=" * 80)
+    logging.info(f"Keyspace: {keyspace} (RF=1)")
+    logging.info(f"Test data ID: {test_id}")
+    logging.info(f"Node that held data: {replica_node} (container: {container_to_stop})")
+    logging.info(f"Node status: RESTARTED")
+    logging.info(f"Data accessible after node removal: {'YES ✓' if data_found else 'NO ✗'}")
+    logging.info(f"Data accessible after node restart: {'YES ✓' if data_found_after_restart else 'NO ✗'}")
+    
+    if data_found:
+        logging.info("\n⚠️  UNEXPECTED: Data is still accessible even though the only replica node is down!")
+        logging.info("   This could indicate:")
+        logging.info("   - Data was replicated to another node (unlikely with RF=1)")
+        logging.info("   - Query is being served from coordinator cache (unlikely)")
+        logging.info("   - Cluster topology changed and data moved (unlikely)")
+    else:
+        logging.info("\n✓ EXPECTED: Data is not accessible after removing the only replica node.")
+        logging.info("   This confirms that with RF=1, data loss occurs when the owning node fails.")
+    
+    if data_found_after_restart:
+        logging.info("\n✓ EXPECTED: Data is accessible again after restarting the node.")
+        logging.info("   This confirms that data persisted on disk and is available when the node comes back up.")
+        logging.info("   The data was not lost - it was just temporarily unavailable while the node was down.")
+    else:
+        logging.info("\n⚠️  UNEXPECTED: Data is still not accessible after restarting the node.")
+        logging.info("   This could indicate:")
+        logging.info("   - Node has not fully rejoined the cluster")
+        logging.info("   - Data was lost from disk (unlikely with persistent volumes)")
+        logging.info("   - Cluster topology changed significantly")
+    
+    logging.info("=" * 80)
 
 
 def main():
@@ -305,38 +250,7 @@ def main():
     data_found_after_restart = row_after_restart is not None
     
     # Step 11: Report results
-    logging.info("\n" + "=" * 80)
-    logging.info("EXPERIMENT RESULTS")
-    logging.info("=" * 80)
-    logging.info(f"Keyspace: {keyspace} (RF=1)")
-    logging.info(f"Test data ID: {test_id}")
-    logging.info(f"Node that held data: {replica_node} (container: {container_to_stop})")
-    logging.info(f"Node status: RESTARTED")
-    logging.info(f"Data accessible after node removal: {'YES ✓' if data_found else 'NO ✗'}")
-    logging.info(f"Data accessible after node restart: {'YES ✓' if data_found_after_restart else 'NO ✗'}")
-    
-    if data_found:
-        logging.info("\n⚠️  UNEXPECTED: Data is still accessible even though the only replica node is down!")
-        logging.info("   This could indicate:")
-        logging.info("   - Data was replicated to another node (unlikely with RF=1)")
-        logging.info("   - Query is being served from coordinator cache (unlikely)")
-        logging.info("   - Cluster topology changed and data moved (unlikely)")
-    else:
-        logging.info("\n✓ EXPECTED: Data is not accessible after removing the only replica node.")
-        logging.info("   This confirms that with RF=1, data loss occurs when the owning node fails.")
-    
-    if data_found_after_restart:
-        logging.info("\n✓ EXPECTED: Data is accessible again after restarting the node.")
-        logging.info("   This confirms that data persisted on disk and is available when the node comes back up.")
-        logging.info("   The data was not lost - it was just temporarily unavailable while the node was down.")
-    else:
-        logging.info("\n⚠️  UNEXPECTED: Data is still not accessible after restarting the node.")
-        logging.info("   This could indicate:")
-        logging.info("   - Node has not fully rejoined the cluster")
-        logging.info("   - Data was lost from disk (unlikely with persistent volumes)")
-        logging.info("   - Cluster topology changed significantly")
-    
-    logging.info("=" * 80)
+    report_experiment_results(keyspace, test_id, replica_node, container_to_stop, data_found, data_found_after_restart)
     
     cluster.shutdown()
     
