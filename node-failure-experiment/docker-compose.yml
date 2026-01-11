@@ -17,7 +17,7 @@ services:
       - "9042:9042" # CQL port
     volumes:
       - cassandra_data1:/var/lib/cassandra
-      - ./logback-debug.xml:/etc/cassandra/logback.xml
+      - ./config/logback-debug.xml:/etc/cassandra/logback.xml
     restart: "no"
     healthcheck:
       # Check that node is UN (Up Normal, not UJ/Joining) AND bootstrap is completed
@@ -40,7 +40,7 @@ services:
       - HEAP_NEWSIZE=128M
     volumes:
       - cassandra_data2:/var/lib/cassandra
-      - ./logback-debug.xml:/etc/cassandra/logback.xml
+      - ./config/logback-debug.xml:/etc/cassandra/logback.xml
     restart: "no"
     depends_on:
       cassandra-node1:
@@ -67,7 +67,7 @@ services:
       - HEAP_NEWSIZE=128M
     volumes:
       - cassandra_data3:/var/lib/cassandra
-      - ./logback-debug.xml:/etc/cassandra/logback.xml
+      - ./config/logback-debug.xml:/etc/cassandra/logback.xml
     restart: "no"
     depends_on:
       cassandra-node2:
@@ -85,13 +85,14 @@ services:
     container_name: node-failure-experiment
     working_dir: /app
     volumes:
-      - ./:/app
+      - .:/app
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - CASSANDRA_CONTACT_POINTS=cassandra-node1,cassandra-node2,cassandra-node3
       - CASSANDRA_PORT=9042
       - CASSANDRA_KEYSPACE=experiment_rf1
       - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
     depends_on:
       cassandra-node3:
         condition: service_healthy
@@ -100,7 +101,7 @@ services:
         apt-get update -qq && 
         apt-get install -y -qq docker.io > /dev/null 2>&1 && 
         pip install -q cassandra-driver mmh3 && 
-        python node_failure_experiment.py
+        python src/application/node_failure_experiment.py
       "
 volumes:
   cassandra_data1:
