@@ -1,6 +1,6 @@
-# Node Failure Experiment: RF=1 Data Availability Test
+# Eventual Consistency Experiment: RF=1 Data Availability Test
 
-This experiment tests what happens when you remove the only node that holds data in a Cassandra cluster with `replication_factor=1`.
+This experiment tests eventual consistency behavior when you remove the only node that holds data in a Cassandra cluster with `replication_factor=1`.
 
 ## Experiment Overview
 
@@ -54,7 +54,7 @@ The test structure mirrors the production code structure, making it easy to loca
 
 1. **Start the 3-node cluster:**
    ```bash
-   cd node-failure-experiment
+   cd eventual-consistency-experiment
    docker-compose up -d
    ```
 
@@ -67,15 +67,15 @@ The test structure mirrors the production code structure, making it easy to loca
 3. **Run the experiment:**
    ```bash
    # Option 1: Run directly (if you have Python and cassandra-driver installed locally)
-   python src/application/node_failure_experiment.py
+   python src/application/eventual_consistency_experiment.py
    
    # Option 2: Run in a Docker container
    docker run --rm \
-     --network cassandra-node-failure_default \
+     --network cassandra-eventual-consistency_default \
      -v $(pwd):/app \
      -w /app \
      python:3.11 \
-     bash -c "pip install -q cassandra-driver && python src/application/node_failure_experiment.py"
+     bash -c "pip install -q cassandra-driver && python src/application/eventual_consistency_experiment.py"
    ```
 
 4. **View results:**
@@ -95,7 +95,7 @@ You can customize the experiment with these environment variables:
 
 Example:
 ```bash
-CASSANDRA_CONTACT_POINTS=localhost CASSANDRA_PORT=9042 python src/application/node_failure_experiment.py
+CASSANDRA_CONTACT_POINTS=localhost CASSANDRA_PORT=9042 python src/application/eventual_consistency_experiment.py
 ```
 
 ## Understanding the Results
@@ -162,7 +162,7 @@ A complete execution log from a successful run of the experiment is available in
 - Complete step-by-step execution output
 - All CQL queries executed during the experiment
 - Token calculation and replica node identification
-- Error messages encountered (expected during node failure)
+- Error messages encountered (expected during node unavailability)
 - Final experiment results confirming expected behavior
 
 The log demonstrates a successful execution where:
@@ -188,7 +188,7 @@ docker-compose down -v
 
 - The experiment uses `ConsistencyLevel.ONE` for both reads and writes
 - The script automatically identifies which node holds the data using Cassandra's token mapping
-- The node is stopped using `docker stop`, simulating a node failure
+- The node is stopped using `docker stop`, simulating node unavailability
 - The script waits 10 seconds after stopping the node for the cluster to detect the failure
 - After restarting the node, the script waits for the container to become healthy (up to 180 seconds) and verifies the node is recognized by the cluster
 - The experiment demonstrates both data unavailability (when node is down) and data persistence (when node restarts)

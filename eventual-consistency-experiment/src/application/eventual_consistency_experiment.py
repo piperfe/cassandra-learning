@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Experiment: Test data availability after removing and restarting the node that holds the only replica
+Experiment: Test eventual consistency behavior after removing and restarting the node that holds the only replica
 (RF=1 scenario)
 
 This script:
@@ -176,7 +176,7 @@ def main():
     table_name = "test_data"
     
     logging.info("=" * 80)
-    logging.info("Node Failure Experiment: RF=1 Data Availability Test")
+    logging.info("Eventual Consistency Experiment: RF=1 Data Availability Test")
     logging.info("=" * 80)
     
     # Step 1: Connect to cluster
@@ -252,7 +252,7 @@ def main():
         return 1
     
     # Wait a bit for cluster to detect the node is down
-    logging.info("Waiting 10 seconds for cluster to detect node failure...")
+    logging.info("Waiting 10 seconds for cluster to detect node unavailability...")
     time.sleep(10)
     
     # Step 8: Try to query the data

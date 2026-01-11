@@ -1,6 +1,6 @@
-# Execution Log: Node Failure Experiment
+# Execution Log: Eventual Consistency Experiment
 
-This document contains a complete execution log from a successful run of the node failure experiment.
+This document contains a complete execution log from a successful run of the eventual consistency experiment.
 
 ## Execution Details
 
@@ -18,7 +18,7 @@ WARNING: Running pip as the 'root' user can result in broken permissions and con
 [notice] To update, run: pip install --upgrade pip
 
 2026-01-11 16:42:37,330 INFO ================================================================================
-2026-01-11 16:42:37,330 INFO Node Failure Experiment: RF=1 Data Availability Test
+2026-01-11 16:42:37,330 INFO Eventual Consistency Experiment: RF=1 Data Availability Test
 2026-01-11 16:42:37,330 INFO ================================================================================
 2026-01-11 16:42:37,330 INFO 
 [Step 1] Connecting to Cassandra cluster...
@@ -88,7 +88,7 @@ WARNING: Running pip as the 'root' user can result in broken permissions and con
 2026-01-11 16:42:44,445 WARNING Host 172.18.0.3:9042 has been marked down
 2026-01-11 16:42:45,488 WARNING Error attempting to reconnect to 172.18.0.3:9042, scheduling retry in 1.82 seconds: [Errno 111] Tried connecting to [('172.18.0.3', 9042)]. Last error: Connection refused
 2026-01-11 16:42:45,700 INFO ✓ Successfully stopped cassandra-node2
-2026-01-11 16:42:45,701 INFO Waiting 10 seconds for cluster to detect node failure...
+2026-01-11 16:42:45,701 INFO Waiting 10 seconds for cluster to detect node unavailability...
 2026-01-11 16:42:52,338 WARNING Error attempting to reconnect to 172.18.0.3:9042, scheduling retry in 4.52 seconds: [Errno None] Tried connecting to [('172.18.0.3', 9042)]. Last error: timed out
 2026-01-11 16:42:55,702 INFO 
 [Step 8] Attempting to query data after node removal...

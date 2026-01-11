@@ -6,8 +6,8 @@ This repository contains two separate experiments for testing Cassandra cluster 
 
 ```
 .
-├── node-failure-experiment/    # Node failure experiment
-│   ├── node_failure_experiment.py
+├── eventual-consistency-experiment/    # Eventual consistency experiment
+│   ├── eventual_consistency_experiment.py
 │   ├── docker-compose.yml
 │   ├── logback-debug.xml
 │   └── README.md
@@ -21,17 +21,17 @@ This repository contains two separate experiments for testing Cassandra cluster 
 
 ## Quick Start
 
-### Node Failure Experiment
+### Eventual Consistency Experiment
 
-Tests data availability with RF=1 when a node fails.
+Tests eventual consistency behavior with RF=1 when a node becomes unavailable.
 
 ```bash
-cd node-failure-experiment
+cd eventual-consistency-experiment
 docker-compose up -d
-python node_failure_experiment.py
+python src/application/eventual_consistency_experiment.py
 ```
 
-See [node-failure-experiment/README.md](node-failure-experiment/README.md) for detailed instructions.
+See [eventual-consistency-experiment/README.md](eventual-consistency-experiment/README.md) for detailed instructions.
 
 ### Load Test Experiment
 
@@ -46,11 +46,11 @@ See [load-test-experiment/README.md](load-test-experiment/README.md) for detaile
 
 ---
 
-## Experiment 1: Node Failure Experiment
+## Experiment 1: Eventual Consistency Experiment
 
-**Location**: `node-failure-experiment/`
+**Location**: `eventual-consistency-experiment/`
 
-This experiment tests what happens when you remove the only node that holds data in a Cassandra cluster with `replication_factor=1`.
+This experiment tests eventual consistency behavior when you remove the only node that holds data in a Cassandra cluster with `replication_factor=1`.
 
 ### Key Features
 
@@ -64,7 +64,7 @@ This experiment tests what happens when you remove the only node that holds data
 
 With `replication_factor=1`, when the node that holds the data is removed, the data should **NOT** be accessible anymore.
 
-**Full documentation**: [node-failure-experiment/README.md](node-failure-experiment/README.md)
+**Full documentation**: [eventual-consistency-experiment/README.md](eventual-consistency-experiment/README.md)
 
 ---
 
@@ -96,14 +96,14 @@ This experiment tests Cassandra cluster performance under various load condition
 
 You can run both experiments simultaneously since they use different Docker Compose projects and different ports:
 
-- **Node Failure Experiment**: Uses port `9042` on the host
+- **Eventual Consistency Experiment**: Uses port `9042` on the host
 - **Load Test Experiment**: Uses port `9043` on the host
 
 ```bash
-# Terminal 1: Run node failure experiment
-cd node-failure-experiment
+# Terminal 1: Run eventual consistency experiment
+cd eventual-consistency-experiment
 docker-compose up -d
-python node_failure_experiment.py
+python src/application/eventual_consistency_experiment.py
 
 # Terminal 2: Run load test experiment
 cd load-test-experiment
@@ -117,8 +117,8 @@ docker-compose up
 To clean up all experiments:
 
 ```bash
-# Clean up node failure experiment
-cd node-failure-experiment
+# Clean up eventual consistency experiment
+cd eventual-consistency-experiment
 docker-compose down -v
 
 # Clean up load test experiment

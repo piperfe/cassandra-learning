@@ -1,6 +1,6 @@
 # docker-compose.yml
-# Docker Compose configuration for Node Failure Experiment
-name: cassandra-node-failure
+# Docker Compose configuration for Eventual Consistency Experiment
+name: cassandra-eventual-consistency
 services:
   cassandra-node1:
     image: cassandra:5.0.6
@@ -82,7 +82,7 @@ services:
       start_period: 90s
   experiment:
     image: python:3.11
-    container_name: node-failure-experiment
+    container_name: eventual-consistency-experiment
     working_dir: /app
     volumes:
       - .:/app
@@ -101,7 +101,7 @@ services:
         apt-get update -qq && 
         apt-get install -y -qq docker.io > /dev/null 2>&1 && 
         pip install -q cassandra-driver mmh3 && 
-        python src/application/node_failure_experiment.py
+        python src/application/eventual_consistency_experiment.py
       "
 volumes:
   cassandra_data1:

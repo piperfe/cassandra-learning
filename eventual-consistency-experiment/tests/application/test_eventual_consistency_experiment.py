@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Tests for src.application.node_failure_experiment.py
+Tests for src.application.eventual_consistency_experiment.py
 
-This test suite provides comprehensive coverage for the node failure experiment script,
+This test suite provides comprehensive coverage for the eventual consistency experiment script,
 testing individual functions and edge cases.
 """
 
@@ -20,7 +20,7 @@ from cassandra.metadata import Murmur3Token
 import sys
 # Add parent directory and src directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.application.node_failure_experiment import (
+from src.application.eventual_consistency_experiment import (
     setup_logging,
     wait_for_cluster,
     get_replica_nodes,
@@ -94,7 +94,7 @@ class TestSetupLogging:
         configured (which pytest does), subsequent calls to basicConfig() are ignored.
         This means the log level from LOG_LEVEL env var may not be applied.
         
-        CODE LOCATION: src.application.node_failure_experiment.py:65-71
+        CODE LOCATION: src.application.eventual_consistency_experiment.py:65-71
         
         CURRENT CODE:
             log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -149,8 +149,8 @@ class TestSetupLogging:
 class TestWaitForCluster:
     """Tests for wait_for_cluster function"""
     
-    @patch('src.application.node_failure_experiment.time.sleep')
-    @patch('src.application.node_failure_experiment.time.time')
+    @patch('src.application.eventual_consistency_experiment.time.sleep')
+    @patch('src.application.eventual_consistency_experiment.time.time')
     def test_returns_true_when_cluster_has_expected_nodes(self, mock_time, mock_sleep, caplog):
         """returns True when cluster has expected number of nodes"""
         # Setup: cluster has 3 nodes up
@@ -202,7 +202,7 @@ class TestWaitForCluster:
         properly exiting when time.time() is mocked. The mock may not be intercepting
         all calls to time.time(), or logging's internal time.time() calls are interfering.
         
-        CODE LOCATION: src.application.node_failure_experiment.py:79
+        CODE LOCATION: src.application.eventual_consistency_experiment.py:79
         CURRENT CODE:
             while time.time() - start_time < max_wait:
         
@@ -229,7 +229,7 @@ class TestWaitForCluster:
         ROOT CAUSE: Same as test_returns_false_when_timeout_exceeded - time.time() mocking
         doesn't work correctly with the while loop condition in wait_for_cluster.
         
-        CODE LOCATION: src.application.node_failure_experiment.py:79,93
+        CODE LOCATION: src.application.eventual_consistency_experiment.py:79,93
         CURRENT CODE:
             while time.time() - start_time < max_wait:
                 try:
@@ -245,8 +245,8 @@ class TestWaitForCluster:
         # This test would hang, so it's skipped
         pass
     
-    @patch('src.application.node_failure_experiment.time.sleep')
-    @patch('src.application.node_failure_experiment.time.time')
+    @patch('src.application.eventual_consistency_experiment.time.sleep')
+    @patch('src.application.eventual_consistency_experiment.time.time')
     def test_counts_only_up_hosts(self, mock_time, mock_sleep, caplog):
         """counts only hosts that are up, not all hosts"""
         mock_cluster = MagicMock()
@@ -294,7 +294,7 @@ class TestWaitForCluster:
         ROOT CAUSE: Same as test_returns_false_when_timeout_exceeded - time.time() mocking
         doesn't work correctly with the while loop condition.
         
-        CODE LOCATION: src.application.node_failure_experiment.py:79,85
+        CODE LOCATION: src.application.eventual_consistency_experiment.py:79,85
         CURRENT CODE:
             while time.time() - start_time < max_wait:
                 logging.info(f"Cluster status: {len(up_hosts)}/{len(hosts)} nodes up")
@@ -673,8 +673,8 @@ class TestBugMagnetSession20260109:
         
         mock_cluster.metadata.all_hosts.return_value = [mock_host1]
         
-        with patch('src.application.node_failure_experiment.time.sleep'):
-            with patch('src.application.node_failure_experiment.time.time') as mock_time:
+        with patch('src.application.eventual_consistency_experiment.time.sleep'):
+            with patch('src.application.eventual_consistency_experiment.time.time') as mock_time:
                 # Time starts at 0, immediately exceeds timeout (0)
                 call_tracker = {'count': 0}
                 def time_side_effect():
