@@ -36,12 +36,96 @@ The codebase is organized into layers following a clean architecture pattern:
 **Tests:**
 - **`tests/application/`** - Tests for the application layer
 - **`tests/repository/`** - Tests for the repository layer
+  - **`test_cassandra_repository.py`** - Unit tests (fast, use mocks)
+  - **`test_cassandra_repository_integration.py`** - Integration tests (real Cassandra via testcontainers)
 - **`tests/infrastructure/`** - Tests for the infrastructure layer
 
 **Configuration:**
 - **`config/`** - Configuration files (logback, etc.)
 
 The test structure mirrors the production code structure, making it easy to locate tests for specific modules. This separation allows for better maintainability, testability, and clear separation of concerns.
+
+## Testing
+
+This project includes both **unit tests** and **integration tests** to ensure comprehensive coverage.
+
+### Unit Tests
+
+Unit tests are fast, isolated tests that use mocks and don't require a database connection.
+
+**Location:** `tests/repository/test_cassandra_repository.py`
+
+**Coverage:**
+- `log_cql_query` function (17 tests)
+  - Query logging with various parameter types
+  - Edge cases: empty strings, unicode, very long strings, SQL injection patterns
+  - BugMagnet session with advanced edge cases
+
+**Run unit tests:**
+```bash
+cd eventual-consistency-experiment
+pytest tests/repository/test_cassandra_repository.py -v
+```
+
+### Integration Tests
+
+Integration tests use [testcontainers](https://testcontainers-python.readthedocs.io/) to spin up real Cassandra 5.0.6 instances in Docker containers, providing realistic testing against actual database behavior.
+
+**Location:** `tests/repository/test_cassandra_repository_integration.py`
+
+**Prerequisites:**
+- Docker must be installed and running
+- Dependencies: `pip install -r ../requirements.txt` (includes `pytest` and `testcontainers`)
+
+**Coverage (68+ tests):**
+- **Connection Management**: Real cluster connections, authentication, multiple contact points
+- **Keyspace Operations**: Creation, deletion, replication factors, edge cases (48-char limit)
+- **Table Operations**: Creation with various configurations
+- **Data Operations**: Insert, query with different consistency levels, edge cases
+- **Token Operations**: Real partition token retrieval and validation
+- **Metadata Operations**: Schema refresh operations
+- **End-to-End Workflows**: Complete multi-step operations
+- **BugMagnet Edge Cases**: Comprehensive edge case coverage including:
+  - Empty/whitespace values
+  - Very long strings (10,000+ characters)
+  - Unicode and special characters
+  - SQL injection patterns (parameterized query safety)
+  - Timestamp edge cases (epoch, future dates, leap years)
+  - Consistency level variations
+  - Multiple keyspaces and sequential operations
+
+**Run integration tests:**
+```bash
+cd eventual-consistency-experiment
+pytest tests/repository/test_cassandra_repository_integration.py -v
+```
+
+**Note:** Integration tests take longer to run (~2-3 minutes) as they start real Cassandra containers. The testcontainers library automatically manages container lifecycle (startup, health checks, cleanup).
+
+### Running All Tests
+
+Run both unit and integration tests:
+
+```bash
+cd eventual-consistency-experiment
+# Run all tests
+pytest tests/ -v
+
+# Run only unit tests (fast)
+pytest tests/repository/test_cassandra_repository.py -v
+
+# Run only integration tests
+pytest tests/repository/test_cassandra_repository_integration.py -v
+```
+
+### Test Organization Strategy
+
+- **Unit tests** are used for pure functions that don't require database interaction (e.g., `log_cql_query`)
+- **Integration tests** are used for functions that interact with Cassandra, ensuring real database behavior is tested
+- This separation provides:
+  - Fast feedback from unit tests during development
+  - Confidence from integration tests that verify real database interactions
+  - No duplicate test coverage between unit and integration tests
 
 ## Running the Experiment
 

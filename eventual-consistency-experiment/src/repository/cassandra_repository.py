@@ -20,6 +20,7 @@ from cassandra.cluster import Cluster, NoHostAvailable
 from cassandra.auth import PlainTextAuthProvider
 from cassandra import ConsistencyLevel
 from cassandra.query import SimpleStatement
+from cassandra import UnresolvableContactPoints
 
 
 def log_cql_query(query, params=None):
@@ -72,7 +73,7 @@ def connect_to_cluster(contact_points, port, username=None, password=None):
         session = cluster.connect()
         logging.info("✓ Connected to cluster")
         return cluster, session
-    except NoHostAvailable as exc:
+    except (NoHostAvailable, UnresolvableContactPoints) as exc:
         logging.error(f"✗ Unable to connect to Cassandra: {exc}")
         return None, None
 

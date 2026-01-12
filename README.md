@@ -44,6 +44,22 @@ docker-compose up
 
 See [load-test-experiment/README.md](load-test-experiment/README.md) for detailed instructions.
 
+### Running Tests
+
+**Unit Tests (fast, no database required):**
+```bash
+cd eventual-consistency-experiment
+pytest tests/repository/test_cassandra_repository.py -v
+```
+
+**Integration Tests (requires Docker, uses real Cassandra):**
+```bash
+cd eventual-consistency-experiment
+pytest tests/repository/test_cassandra_repository_integration.py -v
+```
+
+See the [Testing](#testing) section below for more details.
+
 ---
 
 ## Experiment 1: Eventual Consistency Experiment
@@ -125,6 +141,49 @@ docker-compose down -v
 cd load-test-experiment
 docker-compose down -v
 ```
+
+---
+
+## Testing
+
+### Unit Tests
+
+Fast unit tests that use mocks and don't require a database:
+
+```bash
+cd eventual-consistency-experiment
+pytest tests/ -k "not integration" -v
+```
+
+### Integration Tests
+
+Comprehensive integration tests using [testcontainers](https://testcontainers-python.readthedocs.io/) to spin up real Cassandra instances:
+
+```bash
+cd eventual-consistency-experiment
+pytest tests/repository/test_cassandra_repository_integration.py -v
+```
+
+**Prerequisites for Integration Tests:**
+- Docker must be running (testcontainers uses Docker to manage containers)
+- Dependencies installed: `pip install -r ../requirements.txt`
+
+**Integration Test Coverage:**
+- All repository functions tested against real Cassandra 5.0.6 instances
+- 68+ integration tests covering:
+  - Connection management
+  - Keyspace and table operations
+  - Data insertion and querying
+  - Token retrieval
+  - Metadata operations
+  - End-to-end workflows
+  - Comprehensive edge cases (BugMagnet session)
+
+**Test Organization:**
+- **Unit tests** (`test_cassandra_repository.py`): Fast tests for logging functions (17 tests)
+- **Integration tests** (`test_cassandra_repository_integration.py`): Real database tests (68 tests)
+
+See [eventual-consistency-experiment/README.md](eventual-consistency-experiment/README.md) for detailed testing documentation.
 
 ---
 

@@ -1,2 +1,4 @@
 cassandra-driver
 mmh3
+pytest
+testcontainers
