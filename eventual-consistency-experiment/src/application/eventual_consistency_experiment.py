@@ -18,7 +18,7 @@ import os
 import time
 from datetime import datetime
 
-from src.infrastructure.docker_utils import (
+from src.infrastructure.container_manager import (
     stop_node,
     start_node,
     wait_for_container_healthy,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Tests for src.infrastructure.docker_utils.py
+Tests for src.infrastructure.container_manager.py
 
-This test suite provides comprehensive coverage for Docker utility functions,
+This test suite provides comprehensive coverage for container management functions,
 including container operations, health checks, and edge cases.
 """
 
@@ -17,7 +17,7 @@ import sys
 import os
 # Add parent directory and src directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.infrastructure.docker_utils import (
+from src.infrastructure.container_manager import (
     log_docker_command,
     stop_node,
     start_node,
@@ -88,7 +88,7 @@ class TestStopNode:
     """Tests for stop_node function"""
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_returns_true_when_stop_succeeds(self, mock_log, mock_run, caplog):
         """returns True when docker stop command succeeds"""
         mock_result = MagicMock()
@@ -105,7 +105,7 @@ class TestStopNode:
         mock_log.assert_called_once_with("stop", "test-container")
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_returns_false_when_stop_fails(self, mock_log, mock_run, caplog):
         """returns False when docker stop command fails"""
         mock_result = MagicMock()
@@ -120,7 +120,7 @@ class TestStopNode:
         assert "Failed to stop nonexistent-container" in caplog.text
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_handles_subprocess_exception(self, mock_log, mock_run, caplog):
         """handles subprocess exceptions gracefully"""
         mock_run.side_effect = subprocess.TimeoutExpired("docker", 30)
@@ -132,7 +132,7 @@ class TestStopNode:
         assert "Error stopping container test-container" in caplog.text
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_calls_docker_stop_with_correct_args(self, mock_log, mock_run):
         """calls docker stop with correct arguments"""
         mock_result = MagicMock()
@@ -158,7 +158,7 @@ class TestStartNode:
     """Tests for start_node function"""
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_returns_true_when_start_succeeds(self, mock_log, mock_run, caplog):
         """returns True when docker start command succeeds"""
         mock_result = MagicMock()
@@ -175,7 +175,7 @@ class TestStartNode:
         mock_log.assert_called_once_with("start", "test-container")
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_returns_false_when_start_fails(self, mock_log, mock_run, caplog):
         """returns False when docker start command fails"""
         mock_result = MagicMock()
@@ -190,7 +190,7 @@ class TestStartNode:
         assert "Failed to start nonexistent-container" in caplog.text
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_handles_subprocess_exception(self, mock_log, mock_run, caplog):
         """handles subprocess exceptions gracefully"""
         mock_run.side_effect = subprocess.TimeoutExpired("docker", 30)
@@ -202,7 +202,7 @@ class TestStartNode:
         assert "Error starting container test-container" in caplog.text
     
     @patch('subprocess.run')
-    @patch('src.infrastructure.docker_utils.log_docker_command')
+    @patch('src.infrastructure.container_manager.log_docker_command')
     def test_calls_docker_start_with_correct_args(self, mock_log, mock_run):
         """calls docker start with correct arguments"""
         mock_result = MagicMock()
@@ -305,9 +305,9 @@ class TestGetContainerHealthStatus:
 class TestWaitForContainerHealthy:
     """Tests for wait_for_container_healthy function"""
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     def test_returns_true_when_container_becomes_healthy(self, mock_get_status, mock_time, mock_sleep, caplog):
         """returns True when container becomes healthy"""
         # First call returns "starting", second returns "healthy"
@@ -327,9 +327,9 @@ class TestWaitForContainerHealthy:
         assert result is True
         assert "Container test-container is healthy" in caplog.text
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     def test_returns_false_when_timeout_exceeded(self, mock_get_status, mock_time, mock_sleep, caplog):
         """returns False when container does not become healthy within timeout"""
         mock_get_status.return_value = "starting"
@@ -348,9 +348,9 @@ class TestWaitForContainerHealthy:
         assert result is False
         assert "did not become healthy within 180 seconds" in caplog.text
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     @patch('subprocess.run')
     def test_returns_true_when_no_healthcheck_but_container_running(self, mock_run, mock_get_status, mock_time, mock_sleep, caplog):
         """returns True when no healthcheck but container is running"""
@@ -376,9 +376,9 @@ class TestWaitForContainerHealthy:
         assert result is True
         assert "Container test-container is running (no healthcheck configured)" in caplog.text
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     def test_continues_waiting_when_unhealthy(self, mock_get_status, mock_time, mock_sleep, caplog):
         """continues waiting when container is unhealthy, hoping it recovers"""
         # First unhealthy, then healthy
@@ -398,9 +398,9 @@ class TestWaitForContainerHealthy:
         assert result is True
         assert "Container test-container is unhealthy" in caplog.text
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     def test_logs_starting_status(self, mock_get_status, mock_time, mock_sleep, caplog):
         """logs starting status during wait"""
         mock_get_status.side_effect = ["starting", "healthy"]
@@ -419,9 +419,9 @@ class TestWaitForContainerHealthy:
         assert result is True
         assert "healthcheck is starting" in caplog.text
     
-    @patch('src.infrastructure.docker_utils.time.sleep')
-    @patch('src.infrastructure.docker_utils.time.time')
-    @patch('src.infrastructure.docker_utils.get_container_health_status')
+    @patch('src.infrastructure.container_manager.time.sleep')
+    @patch('src.infrastructure.container_manager.time.time')
+    @patch('src.infrastructure.container_manager.get_container_health_status')
     @patch('subprocess.run')
     def test_handles_exception_when_checking_running_status(self, mock_run, mock_get_status, mock_time, mock_sleep, caplog):
         """handles exception when checking if container is running"""
