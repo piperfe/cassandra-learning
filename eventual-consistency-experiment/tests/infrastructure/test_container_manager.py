@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Tests for src.infrastructure.container_manager.py
+Unit Tests for src.infrastructure.container_manager.py
 
-This test suite provides comprehensive coverage for container management functions,
-including container operations, health checks, and edge cases.
+This test suite provides comprehensive unit test coverage for container management functions,
+using mocks to test container operations, health checks, and edge cases without requiring
+a real Docker instance.
+
+For integration tests against real Docker containers, see:
+- test_container_manager_integration.py
 """
 
 import logging
 import subprocess
-import time
-from unittest.mock import Mock, patch, MagicMock
-import pytest
+from unittest.mock import patch, MagicMock
 
 # Import the module under test
 import sys
@@ -23,8 +25,6 @@ from src.infrastructure.container_manager import (
     start_node,
     get_container_health_status,
     wait_for_container_healthy,
-    get_container_ip,
-    map_replica_node_to_container,
 )
 
 
@@ -33,21 +33,11 @@ from src.infrastructure.container_manager import (
 # ============================================================================
 
 class TestLogDockerCommand:
-    """Tests for log_docker_command function"""
+    """Tests for log_docker_command function
     
-    def test_logs_command_with_string_cmd(self, caplog):
-        """logs docker command correctly when cmd is a string"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("stop", "container-name")
-        
-        assert "Docker Command: docker stop container-name" in caplog.text
-    
-    def test_logs_command_with_list_cmd(self, caplog):
-        """logs docker command correctly when cmd is a list"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command(["stop"], "container-name")
-        
-        assert "Docker Command: docker stop container-name" in caplog.text
+    Note: Basic functionality is tested in integration tests.
+    These unit tests focus on edge cases and error conditions.
+    """
     
     def test_logs_command_with_list_args(self, caplog):
         """logs docker command correctly when args is a list"""
@@ -85,39 +75,11 @@ class TestLogDockerCommand:
 # ============================================================================
 
 class TestStopNode:
-    """Tests for stop_node function"""
+    """Tests for stop_node function
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_returns_true_when_stop_succeeds(self, mock_log, mock_run, caplog):
-        """returns True when docker stop command succeeds"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
-        
-        with caplog.at_level(logging.INFO):
-            result = stop_node("test-container")
-        
-        assert result is True
-        assert "Successfully stopped test-container" in caplog.text
-        mock_run.assert_called_once()
-        mock_log.assert_called_once_with("stop", "test-container")
-    
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_returns_false_when_stop_fails(self, mock_log, mock_run, caplog):
-        """returns False when docker stop command fails"""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "Error: container not found"
-        mock_run.return_value = mock_result
-        
-        with caplog.at_level(logging.ERROR):
-            result = stop_node("nonexistent-container")
-        
-        assert result is False
-        assert "Failed to stop nonexistent-container" in caplog.text
+    Note: Basic success/failure scenarios are tested in integration tests.
+    These unit tests focus on error handling and edge cases.
+    """
     
     @patch('subprocess.run')
     @patch('src.infrastructure.container_manager.log_docker_command')
@@ -155,39 +117,11 @@ class TestStopNode:
 # ============================================================================
 
 class TestStartNode:
-    """Tests for start_node function"""
+    """Tests for start_node function
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_returns_true_when_start_succeeds(self, mock_log, mock_run, caplog):
-        """returns True when docker start command succeeds"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
-        
-        with caplog.at_level(logging.INFO):
-            result = start_node("test-container")
-        
-        assert result is True
-        assert "Successfully started test-container" in caplog.text
-        mock_run.assert_called_once()
-        mock_log.assert_called_once_with("start", "test-container")
-    
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_returns_false_when_start_fails(self, mock_log, mock_run, caplog):
-        """returns False when docker start command fails"""
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_result.stderr = "Error: container not found"
-        mock_run.return_value = mock_result
-        
-        with caplog.at_level(logging.ERROR):
-            result = start_node("nonexistent-container")
-        
-        assert result is False
-        assert "Failed to start nonexistent-container" in caplog.text
+    Note: Basic success/failure scenarios are tested in integration tests.
+    These unit tests focus on error handling and edge cases.
+    """
     
     @patch('subprocess.run')
     @patch('src.infrastructure.container_manager.log_docker_command')
@@ -225,32 +159,11 @@ class TestStartNode:
 # ============================================================================
 
 class TestGetContainerHealthStatus:
-    """Tests for get_container_health_status function"""
+    """Tests for get_container_health_status function
     
-    @patch('subprocess.run')
-    def test_returns_health_status_when_available(self, mock_run):
-        """returns health status when container has healthcheck configured"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "healthy\n"
-        mock_run.return_value = mock_result
-        
-        result = get_container_health_status("test-container")
-        
-        assert result == "healthy"
-        mock_run.assert_called_once()
-    
-    @patch('subprocess.run')
-    def test_returns_none_when_no_healthcheck(self, mock_run):
-        """returns None when container has no healthcheck configured"""
-        mock_result = MagicMock()
-        mock_result.returncode = 1  # Command fails when no healthcheck
-        mock_result.stderr = "No healthcheck configured"
-        mock_run.return_value = mock_result
-        
-        result = get_container_health_status("test-container")
-        
-        assert result is None
+    Note: Basic functionality is tested in integration tests.
+    These unit tests focus on edge cases and error conditions.
+    """
     
     @patch('subprocess.run')
     def test_handles_exception_gracefully(self, mock_run):
@@ -303,78 +216,11 @@ class TestGetContainerHealthStatus:
 # ============================================================================
 
 class TestWaitForContainerHealthy:
-    """Tests for wait_for_container_healthy function"""
+    """Tests for wait_for_container_healthy function
     
-    @patch('src.infrastructure.container_manager.time.sleep')
-    @patch('src.infrastructure.container_manager.time.time')
-    @patch('src.infrastructure.container_manager.get_container_health_status')
-    def test_returns_true_when_container_becomes_healthy(self, mock_get_status, mock_time, mock_sleep, caplog):
-        """returns True when container becomes healthy"""
-        # First call returns "starting", second returns "healthy"
-        mock_get_status.side_effect = ["starting", "healthy"]
-        
-        # Mock time: start at 0, then 1 for all subsequent calls (logging may call time.time() multiple times)
-        call_count = [0]
-        def time_side_effect():
-            call_count[0] += 1
-            return 0 if call_count[0] == 1 else 1
-        
-        mock_time.side_effect = time_side_effect
-        
-        with caplog.at_level(logging.INFO):
-            result = wait_for_container_healthy("test-container", max_wait=180)
-        
-        assert result is True
-        assert "Container test-container is healthy" in caplog.text
-    
-    @patch('src.infrastructure.container_manager.time.sleep')
-    @patch('src.infrastructure.container_manager.time.time')
-    @patch('src.infrastructure.container_manager.get_container_health_status')
-    def test_returns_false_when_timeout_exceeded(self, mock_get_status, mock_time, mock_sleep, caplog):
-        """returns False when container does not become healthy within timeout"""
-        mock_get_status.return_value = "starting"
-        
-        # Mock time: start at 0, then exceed timeout
-        call_count = [0]
-        def time_side_effect():
-            call_count[0] += 1
-            return 0 if call_count[0] == 1 else 181
-        
-        mock_time.side_effect = time_side_effect
-        
-        with caplog.at_level(logging.WARNING):
-            result = wait_for_container_healthy("test-container", max_wait=180)
-        
-        assert result is False
-        assert "did not become healthy within 180 seconds" in caplog.text
-    
-    @patch('src.infrastructure.container_manager.time.sleep')
-    @patch('src.infrastructure.container_manager.time.time')
-    @patch('src.infrastructure.container_manager.get_container_health_status')
-    @patch('subprocess.run')
-    def test_returns_true_when_no_healthcheck_but_container_running(self, mock_run, mock_get_status, mock_time, mock_sleep, caplog):
-        """returns True when no healthcheck but container is running"""
-        mock_get_status.return_value = None  # No healthcheck
-        
-        # Mock time: start at 0, then 1
-        call_count = [0]
-        def time_side_effect():
-            call_count[0] += 1
-            return 0 if call_count[0] == 1 else 1
-        
-        mock_time.side_effect = time_side_effect
-        
-        # Mock container running check
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "true\n"
-        mock_run.return_value = mock_result
-        
-        with caplog.at_level(logging.INFO):
-            result = wait_for_container_healthy("test-container", max_wait=180)
-        
-        assert result is True
-        assert "Container test-container is running (no healthcheck configured)" in caplog.text
+    Note: Basic functionality is tested in integration tests.
+    These unit tests focus on timeout scenarios and error conditions.
+    """
     
     @patch('src.infrastructure.container_manager.time.sleep')
     @patch('src.infrastructure.container_manager.time.time')
@@ -534,32 +380,7 @@ class TestDockerEdgeCases:
     # Complex Interactions
     # ========================================================================
     
-    def test_stop_then_start_same_container(self, caplog):
-        """handles stopping and then starting the same container"""
-        container_name = "test-container"
-        
-        with patch('subprocess.run') as mock_run:
-            # First call (stop) succeeds
-            mock_result_stop = MagicMock()
-            mock_result_stop.returncode = 0
-            mock_result_stop.stderr = ""
-            
-            # Second call (start) succeeds
-            mock_result_start = MagicMock()
-            mock_result_start.returncode = 0
-            mock_result_start.stderr = ""
-            
-            mock_run.side_effect = [mock_result_stop, mock_result_start]
-            
-            with caplog.at_level(logging.INFO):
-                stop_result = stop_node(container_name)
-                start_result = start_node(container_name)
-            
-            assert stop_result is True
-            assert start_result is True
-            assert "Successfully stopped" in caplog.text
-            assert "Successfully started" in caplog.text
-            assert mock_run.call_count == 2
+    # Note: stop_then_start_same_container is tested in integration tests
     
     def test_multiple_container_operations_in_sequence(self, caplog):
         """handles multiple container operations on different containers"""
