@@ -43,7 +43,11 @@ def stop_node(container_name):
             logging.info(f"✓ Successfully stopped {container_name}")
             return True
         else:
-            logging.error(f"Failed to stop {container_name}: {result.stderr}")
+            # Check if container not found
+            if "No such container" in result.stderr or "not found" in result.stderr.lower():
+                logging.error(f"Failed to stop {container_name}")
+            else:
+                logging.error(f"Failed to stop {container_name}: {result.stderr}")
             return False
     except Exception as e:
         logging.error(f"Error stopping container {container_name}: {e}")
@@ -65,7 +69,11 @@ def start_node(container_name):
             logging.info(f"✓ Successfully started {container_name}")
             return True
         else:
-            logging.error(f"Failed to start {container_name}: {result.stderr}")
+            # Check if container not found
+            if "No such container" in result.stderr or "not found" in result.stderr.lower():
+                logging.error(f"Failed to start {container_name}")
+            else:
+                logging.error(f"Failed to start {container_name}: {result.stderr}")
             return False
     except Exception as e:
         logging.error(f"Error starting container {container_name}: {e}")
@@ -200,4 +208,3 @@ def map_replica_node_to_container(replica_node_address, container_names, cluster
                         return container
     
     return None
-
