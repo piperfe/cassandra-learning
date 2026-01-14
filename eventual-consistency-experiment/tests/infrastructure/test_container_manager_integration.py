@@ -3,10 +3,23 @@
 Integration Tests for src.infrastructure.container_manager.py
 
 This test suite provides integration tests for container management functions,
-testing against real Docker containers using Docker-in-Docker (dind).
+testing against real Docker containers.
 
-All Docker commands are executed against a Docker daemon running inside a container,
-providing complete isolation from the host Docker environment.
+The test environment uses the host Docker daemon by default.
+
+Environment Variable Control:
+    DOCKER_TEST_ENV: Controls which Docker environment to use
+    - "dind" or "DIND": Force use of Docker-in-Docker (always use dind)
+    - Unset or any other value: Use host Docker (default)
+
+Examples:
+    # Use host Docker (default)
+    pytest tests/infrastructure/test_container_manager_integration.py
+
+    # Force use of Docker-in-Docker
+    DOCKER_TEST_ENV=dind pytest tests/infrastructure/test_container_manager_integration.py
+
+All Docker commands are executed against the selected Docker daemon.
 """
 
 import logging
@@ -16,6 +29,7 @@ import os
 import docker
 import tempfile
 import json
+import subprocess
 
 try:
     from testcontainers.core.container import DockerContainer
@@ -43,6 +57,86 @@ from src.infrastructure.container_manager import (
 # Helper Functions
 # ============================================================================
 
+def _get_docker_environment_preference():
+    """Get Docker environment preference from environment variable.
+    
+    Checks DOCKER_TEST_ENV environment variable:
+    - "dind" or "DIND": Force use of Docker-in-Docker
+    - Unset or any other value: Use host Docker (default)
+    
+    Returns:
+        str or None: "dind" to force dind, or None for default (host Docker)
+    """
+    env_var = os.environ.get("DOCKER_TEST_ENV", "").strip().upper()
+    if env_var in ("DIND", "DOCKER_IN_DOCKER"):
+        return "dind"
+    else:
+        return None  # Default: use host Docker
+
+
+def _check_host_docker_available():
+    """Check if host Docker daemon is available.
+    
+    Checks both subprocess (docker command) and Python Docker client.
+    Both need to work because:
+    - The code under test uses subprocess (docker command)
+    - The test fixtures use Python Docker client to create containers
+    
+    Returns:
+        tuple: (is_available: bool, docker_host: str or None)
+    """
+    # First check if docker command works (what the code under test uses)
+    docker_cmd_works = False
+    try:
+        result = subprocess.run(
+            ["docker", "ps"],
+            capture_output=True,
+            timeout=5,
+            text=True
+        )
+        if result.returncode == 0:
+            docker_cmd_works = True
+            logging.info("Docker command ('docker ps') works")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logging.info("Docker command not found or timed out")
+    except Exception as e:
+        logging.debug(f"Error checking Docker command: {e}")
+    
+    # Also check if Python Docker client works (what test fixtures need)
+    python_client_works = False
+    try:
+        # Temporarily save DOCKER_CONFIG if it exists
+        original_docker_config = os.environ.get('DOCKER_CONFIG')
+        try:
+            # Try without custom DOCKER_CONFIG first
+            if 'DOCKER_CONFIG' in os.environ:
+                del os.environ['DOCKER_CONFIG']
+            default_client = docker.from_env()
+            default_client.info()  # Test connection
+            default_client.close()
+            python_client_works = True
+            logging.info("Python Docker client works")
+        finally:
+            # Restore original DOCKER_CONFIG
+            if original_docker_config:
+                os.environ['DOCKER_CONFIG'] = original_docker_config
+            elif 'DOCKER_CONFIG' in os.environ:
+                del os.environ['DOCKER_CONFIG']
+    except Exception as e:
+        logging.debug(f"Python Docker client connection failed: {e}")
+    
+    # Both need to work for host Docker to be usable
+    if docker_cmd_works and python_client_works:
+        logging.info("Host Docker is fully available (both command and Python client work)")
+        return True, None
+    elif docker_cmd_works and not python_client_works:
+        logging.warning("Docker command works but Python client doesn't - will fall back to Docker-in-Docker")
+        return False, None
+    else:
+        logging.info("Host Docker is not available")
+        return False, None
+
+
 def _get_docker_client(docker_host):
     """Get Docker client with clean config to avoid credential helpers.
     
@@ -52,6 +146,9 @@ def _get_docker_client(docker_host):
     
     Note: No cleanup needed - temp directory will be cleaned by OS, and DOCKER_CONFIG
     changes are scoped to the test process.
+    
+    Args:
+        docker_host: Docker daemon URL. If None, uses default (host Docker).
     """
     tmpdir = tempfile.mkdtemp()
     docker_config_dir = os.path.join(tmpdir, '.docker')
@@ -62,11 +159,22 @@ def _get_docker_client(docker_host):
         json.dump({"auths": {}}, f)
     
     os.environ['DOCKER_CONFIG'] = docker_config_dir
-    return docker.DockerClient(base_url=docker_host)
+    
+    if docker_host is None:
+        # Use default Docker client (host Docker)
+        return docker.from_env()
+    else:
+        # Use specified Docker host (e.g., Docker-in-Docker container)
+        return docker.DockerClient(base_url=docker_host)
 
 
 def _cleanup_container(docker_host, container_name):
-    """Helper to cleanup a container using Docker API."""
+    """Helper to cleanup a container using Docker API.
+    
+    Args:
+        docker_host: Docker daemon URL. If None, uses default (host Docker).
+        container_name: Name of the container to cleanup.
+    """
     try:
         client = _get_docker_client(docker_host)
         container = client.containers.get(container_name)
@@ -83,15 +191,34 @@ def _cleanup_container(docker_host, container_name):
 @pytest.fixture(scope="module")
 def docker_dind_container():
     """
-    Fixture that provides a Docker-in-Docker container for the entire test module.
-    This container runs its own Docker daemon that all tests will use.
+    Fixture that provides a Docker environment for the entire test module.
+    By default uses host Docker, but can be configured to use Docker-in-Docker.
+    
+    Environment variable DOCKER_TEST_ENV controls the behavior:
+    - "dind" or "DIND": Force use of Docker-in-Docker (creates isolated container)
+    - Unset or any other value: Use host Docker (default)
     
     Based on: https://hub.docker.com/_/docker
     """
+    # Check environment variable preference
+    env_preference = _get_docker_environment_preference()
+    
+    if env_preference == "dind":
+        # Force use of Docker-in-Docker
+        logging.info("DOCKER_TEST_ENV=dind: Setting up Docker-in-Docker container")
+    else:
+        # Default: use host Docker
+        logging.info("Using host Docker (default behavior)")
+        yield None
+        return
+    
+    # Create Docker-in-Docker container for isolated testing
+    logging.info("Setting up Docker-in-Docker container")
+    
     # Create Docker-in-Docker container
-    # Using dind (Docker in Docker) variant without TLS for simplicity in tests
+    # Using dind variant without TLS for simplicity in tests
     container = DockerContainer("docker:29-dind")
-    container.with_kwargs(privileged=True)  # Required for dind
+    container.with_kwargs(privileged=True)  # Required for Docker-in-Docker
     container.with_exposed_ports(2375)  # Docker daemon port (non-TLS)
     # Disable TLS for simplicity (DOCKER_TLS_CERTDIR not set)
     container.with_env("DOCKER_TLS_CERTDIR", "")
@@ -99,12 +226,12 @@ def docker_dind_container():
     container.start()
     
     # Wait for Docker daemon to be ready
-    dind_host = container.get_container_host_ip()
-    dind_port = container.get_exposed_port(2375)
-    docker_host = f"tcp://{dind_host}:{dind_port}"
+    container_host = container.get_container_host_ip()
+    container_port = container.get_exposed_port(2375)
+    docker_host = f"tcp://{container_host}:{container_port}"
     
     # Wait for Docker daemon to be ready
-    logging.info("Waiting for Docker-in-Docker daemon to start...")
+    logging.info("Waiting for Docker daemon to start...")
     time.sleep(5)  # Initial wait for daemon to start
     max_retries = 60
     retry_delay = 2
@@ -117,16 +244,16 @@ def docker_dind_container():
             client.containers.list(all=True)
             # One more test - try to pull a small image to ensure daemon is fully operational
             client.images.pull("alpine:latest")
-            logging.info(f"Docker-in-Docker daemon ready after {attempt + 1} attempts")
+            logging.info(f"Docker daemon ready after {attempt + 1} attempts")
             break
         except Exception as e:
             if attempt < max_retries - 1:
                 if attempt % 10 == 0:
-                    logging.info(f"Waiting for Docker-in-Docker daemon... attempt {attempt + 1}/{max_retries}: {e}")
+                    logging.info(f"Waiting for Docker daemon... attempt {attempt + 1}/{max_retries}: {e}")
                 time.sleep(retry_delay)
             else:
-                logging.error(f"Docker-in-Docker daemon did not become ready: {e}")
-                raise Exception(f"Docker-in-Docker daemon did not become ready in time: {e}")
+                logging.error(f"Docker daemon did not become ready: {e}")
+                raise Exception(f"Docker daemon did not become ready in time: {e}")
     
     # Additional wait to ensure daemon is fully stable
     time.sleep(3)
@@ -150,24 +277,35 @@ def docker_dind_container():
 @pytest.fixture(scope="function")
 def docker_host_env(docker_dind_container, monkeypatch):
     """
-    Fixture that sets DOCKER_HOST environment variable to point to the dind container.
-    This makes all docker commands use the Docker daemon inside the dind container.
+    Fixture that sets DOCKER_HOST environment variable appropriately.
+    - If using host Docker: doesn't set DOCKER_HOST (uses default)
+    - If using Docker-in-Docker: sets DOCKER_HOST to point to the containerized daemon.
+    
+    This makes all docker commands use the appropriate Docker daemon.
     """
-    docker_host = docker_dind_container["docker_host"]
-    monkeypatch.setenv("DOCKER_HOST", docker_host)
-    yield docker_host
+    if docker_dind_container is None:
+        # Using host Docker, don't set DOCKER_HOST (use default)
+        # Remove DOCKER_HOST if it was set previously
+        monkeypatch.delenv("DOCKER_HOST", raising=False)
+        yield None  # None indicates host Docker
+    else:
+        # Using Docker-in-Docker, set DOCKER_HOST to containerized daemon
+        docker_host = docker_dind_container["docker_host"]
+        monkeypatch.setenv("DOCKER_HOST", docker_host)
+        yield docker_host
 
 
 @pytest.fixture(scope="function")
 def test_container(docker_dind_container, docker_host_env):
     """
-    Fixture that provides a test container running inside the Docker-in-Docker instance.
+    Fixture that provides a test container running in the Docker environment.
+    Uses the configured Docker daemon (host Docker by default, or Docker-in-Docker if specified).
     Uses a lightweight Alpine Linux container that can be started/stopped.
     """
-    # Create a container inside the dind instance
+    # Create a container in the Docker environment
     container_name = f"test-container-{int(time.time() * 1000000)}"
     
-    # Run container inside dind with retries, using Docker API
+    # Run container with retries, using Docker API
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -187,7 +325,7 @@ def test_container(docker_dind_container, docker_host_env):
             if attempt < max_retries - 1:
                 time.sleep(2)
             else:
-                pytest.fail(f"Failed to create test container in dind after {max_retries} attempts: {str(e)}")
+                pytest.fail(f"Failed to create test container after {max_retries} attempts: {str(e)}")
     
     # Reduced wait - container creation is synchronous, brief wait for state to settle
     time.sleep(0.5)
@@ -201,7 +339,8 @@ def test_container(docker_dind_container, docker_host_env):
 @pytest.fixture(scope="function")
 def container_with_healthcheck(docker_dind_container, docker_host_env):
     """
-    Fixture that provides a container with healthcheck configured inside the dind instance.
+    Fixture that provides a container with healthcheck configured.
+    Uses the configured Docker daemon (host Docker by default, or Docker-in-Docker if specified).
     Uses nginx which can have a healthcheck configured.
     """
     container_name = f"healthcheck-container-{int(time.time() * 1000000)}"
@@ -232,7 +371,7 @@ def container_with_healthcheck(docker_dind_container, docker_host_env):
             if attempt < max_retries - 1:
                 time.sleep(2)
             else:
-                pytest.fail(f"Failed to create healthcheck container in dind after {max_retries} attempts: {str(e)}")
+                pytest.fail(f"Failed to create healthcheck container after {max_retries} attempts: {str(e)}")
     
     # Reduced wait - container starts quickly, healthcheck has its own start period (5s)
     # We only need to wait for container to be created, not for healthcheck to complete
@@ -276,7 +415,7 @@ class TestStopNodeIntegration:
     """Integration tests for stop_node function"""
     
     def test_returns_true_when_stop_succeeds(self, test_container, docker_host_env, caplog):
-        """returns True when docker stop command succeeds on real container in dind"""
+        """returns True when docker stop command succeeds on real container"""
         # Ensure container is running first
         client = _get_docker_client(docker_host_env)
         container = client.containers.get(test_container)
@@ -288,7 +427,7 @@ class TestStopNodeIntegration:
         assert result is True
         assert f"Successfully stopped {test_container}" in caplog.text
         
-        # Verify container is actually stopped in dind
+        # Verify container is actually stopped
         container.reload()
         assert container.attrs['State']['Running'] is False
     
@@ -311,7 +450,7 @@ class TestStartNodeIntegration:
     """Integration tests for start_node function"""
     
     def test_returns_true_when_start_succeeds(self, test_container, docker_host_env, caplog):
-        """returns True when docker start command succeeds on real container in dind"""
+        """returns True when docker start command succeeds on real container"""
         # First stop the container
         client = _get_docker_client(docker_host_env)
         container = client.containers.get(test_container)
@@ -323,7 +462,7 @@ class TestStartNodeIntegration:
         assert result is True
         assert f"Successfully started {test_container}" in caplog.text
         
-        # Verify container is actually running in dind
+        # Verify container is actually running
         container.reload()
         assert container.attrs['State']['Running'] is True
     
@@ -346,7 +485,7 @@ class TestGetContainerHealthStatusIntegration:
     """Integration tests for get_container_health_status function"""
     
     def test_returns_health_status_when_available(self, container_with_healthcheck, docker_host_env):
-        """returns health status when container has healthcheck configured in dind"""
+        """returns health status when container has healthcheck configured"""
         # Wait for healthcheck to begin
         time.sleep(3)
         
@@ -392,7 +531,7 @@ class TestWaitForContainerHealthyIntegration:
     """Integration tests for wait_for_container_healthy function"""
     
     def test_returns_true_when_container_becomes_healthy(self, container_with_healthcheck, docker_host_env, caplog):
-        """returns True when container becomes healthy in dind"""
+        """returns True when container becomes healthy"""
         with caplog.at_level(logging.INFO):
             result = wait_for_container_healthy(container_with_healthcheck, max_wait=60)
         
@@ -401,7 +540,7 @@ class TestWaitForContainerHealthyIntegration:
         assert container_with_healthcheck in caplog.text
     
     def test_returns_true_when_no_healthcheck_but_container_running(self, test_container, docker_host_env, caplog):
-        """returns True when no healthcheck but container is running in dind"""
+        """returns True when no healthcheck but container is running"""
         # Ensure container is running
         client = _get_docker_client(docker_host_env)
         container = client.containers.get(test_container)
@@ -431,7 +570,7 @@ class TestGetContainerIPIntegration:
     """Integration tests for get_container_ip function"""
     
     def test_returns_ip_when_container_exists(self, test_container):
-        """returns IP address when container exists in dind"""
+        """returns IP address when container exists"""
         ip = get_container_ip(test_container)
         
         assert ip is not None
@@ -458,7 +597,7 @@ class TestComplexScenariosIntegration:
     """Integration tests for complex container management scenarios"""
     
     def test_stop_then_start_same_container(self, test_container, docker_host_env, caplog):
-        """handles stopping and then starting the same container in dind"""
+        """handles stopping and then starting the same container"""
         # Ensure container is running
         client = _get_docker_client(docker_host_env)
         container = client.containers.get(test_container)
@@ -474,7 +613,7 @@ class TestComplexScenariosIntegration:
         assert "Successfully started" in caplog.text
     
     def test_get_ip_after_restart(self, test_container):
-        """gets IP address correctly after container restart in dind"""
+        """gets IP address correctly after container restart"""
         # Get IP while running
         ip_before = get_container_ip(test_container)
         
@@ -494,24 +633,6 @@ class TestComplexScenariosIntegration:
         assert len(ip_after) > 0
 
 
-# ============================================================================
-# Test: Edge Cases with Real Containers in dind
-# ============================================================================
-
-class TestEdgeCasesIntegration:
-    """Integration tests for edge cases with real containers in dind"""
-    
-    def test_verifies_isolation_from_host_docker(self, docker_dind_container, docker_host_env):
-        """verifies that tests use dind Docker daemon, not host Docker"""
-        # List containers in dind using Docker API
-        client = _get_docker_client(docker_host_env)
-        containers = client.containers.list(all=True)
-        
-        # Verify we're using the dind Docker daemon (not host)
-        assert docker_host_env.startswith("tcp://")
-        # At minimum, dind should be able to list containers
-        assert isinstance(containers, list)
-
 
 # ============================================================================
 # BugMagnet Session 2026-01-09: Integration Test Edge Case Coverage
@@ -525,7 +646,7 @@ class TestBugMagnetEdgeCasesIntegration:
     # ========================================================================
     
     def test_handles_very_long_container_name(self, docker_host_env, caplog):
-        """handles container names at system limits (255+ characters) in dind"""
+        """handles container names at system limits (255+ characters)"""
         very_long_name = "a" * 200  # Docker has limits, use reasonable length
         container_name = f"test-{very_long_name}"
         
