@@ -5,21 +5,45 @@ Integration Tests for src.infrastructure.container_manager.py
 This test suite provides integration tests for container management functions,
 testing against real Docker containers.
 
-The test environment uses the host Docker daemon by default.
+Test Fixture Architecture:
+    The test suite uses a 2-step fixture initialization process:
+    
+    1. docker_host (module-scoped)
+       - Establishes which Docker daemon to use
+       - Default: host Docker (most common)
+       - Optional: Docker-in-Docker for isolation
+    
+    2. docker_environment (module-scoped)
+       - Validates Docker is operational using a health-check container
+       - Pre-pulls required images (nginx:alpine, alpine:latest)
+       - Runs once per test session for efficiency
+       - Tests only need to depend on this fixture
 
 Environment Variable Control:
     DOCKER_TEST_ENV: Controls which Docker environment to use
-    - "dind" or "DIND": Force use of Docker-in-Docker (always use dind)
-    - Unset or any other value: Use host Docker (default)
+    - Unset or any other value: Use host Docker (default, recommended)
+    - "dind" or "DIND": Force use of Docker-in-Docker (isolated environment)
 
 Examples:
-    # Use host Docker (default)
+    # Use host Docker (default, recommended)
     pytest tests/infrastructure/test_container_manager_integration.py
-
-    # Force use of Docker-in-Docker
+    
+    # Force use of Docker-in-Docker (for isolated testing)
     DOCKER_TEST_ENV=dind pytest tests/infrastructure/test_container_manager_integration.py
+    
+    # Run specific test class
+    pytest tests/infrastructure/test_container_manager_integration.py::TestStopNodeIntegration -v
+    
+    # Run with verbose output
+    pytest tests/infrastructure/test_container_manager_integration.py -v --tb=short
 
-All Docker commands are executed against the selected Docker daemon.
+Test Coverage:
+    - stop_node(): Container stop operations
+    - start_node(): Container start operations
+    - get_container_health_status(): Health status retrieval
+    - wait_for_container_healthy(): Health status polling
+    - get_container_ip(): IP address retrieval
+    - Complex scenarios: restart, multiple containers, edge cases
 """
 
 import logging
@@ -70,40 +94,6 @@ def _get_docker_environment_preference():
         return "dind"
     else:
         return None  # Default: use host Docker
-
-
-def _check_host_docker_available():
-    """Check if host Docker daemon is available via Python Docker client.
-    
-    The code under test and test fixtures both use Python Docker client exclusively,
-    so we only need to verify the Python Docker client can connect to the daemon.
-    
-    Returns:
-        tuple: (is_available: bool, docker_host: str or None)
-    """
-    # Check if Python Docker client works
-    try:
-        # Temporarily save DOCKER_CONFIG if it exists
-        original_docker_config = os.environ.get('DOCKER_CONFIG')
-        try:
-            # Try without custom DOCKER_CONFIG first
-            if 'DOCKER_CONFIG' in os.environ:
-                del os.environ['DOCKER_CONFIG']
-            default_client = docker.from_env()
-            default_client.info()  # Test connection
-            default_client.close()
-            logging.info("Python Docker client works - host Docker is available")
-            return True, None
-        finally:
-            # Restore original DOCKER_CONFIG
-            if original_docker_config:
-                os.environ['DOCKER_CONFIG'] = original_docker_config
-            elif 'DOCKER_CONFIG' in os.environ:
-                del os.environ['DOCKER_CONFIG']
-    except Exception as e:
-        logging.debug(f"Python Docker client connection failed: {e}")
-        logging.info("Host Docker is not available")
-        return False, None
 
 
 def _get_docker_client(docker_host):
@@ -158,61 +148,66 @@ def _cleanup_container(docker_host, container_name):
 # ============================================================================
 
 @pytest.fixture(scope="module")
-def docker_dind_container():
+def docker_host():
     """
-    Fixture that provides a Docker environment for the entire test module.
-    By default uses host Docker, but can be configured to use Docker-in-Docker.
+    Step 1: Establish the Docker host to use for all tests.
     
+    By default uses host Docker, but can be configured to use Docker-in-Docker.
     Environment variable DOCKER_TEST_ENV controls the behavior:
     - "dind" or "DIND": Force use of Docker-in-Docker (creates isolated container)
     - Unset or any other value: Use host Docker (default)
     
-    Based on: https://hub.docker.com/_/docker
+    Returns:
+        docker_host_url: None for host Docker, or "tcp://host:port" for DIND
     """
-    # Check environment variable preference
     env_preference = _get_docker_environment_preference()
     
-    if env_preference == "dind":
-        # Force use of Docker-in-Docker
-        logging.info("DOCKER_TEST_ENV=dind: Setting up Docker-in-Docker container")
-    else:
+    # Save original DOCKER_HOST if it exists
+    original_docker_host = os.environ.get("DOCKER_HOST")
+    
+    if env_preference != "dind":
         # Default: use host Docker
         logging.info("Using host Docker (default behavior)")
+        # Clear DOCKER_HOST to use default
+        if "DOCKER_HOST" in os.environ:
+            del os.environ["DOCKER_HOST"]
+        
         yield None
+        
+        # Restore original DOCKER_HOST
+        if original_docker_host:
+            os.environ["DOCKER_HOST"] = original_docker_host
         return
     
-    # Create Docker-in-Docker container for isolated testing
-    logging.info("Setting up Docker-in-Docker container")
+    # Force use of Docker-in-Docker
+    logging.info("DOCKER_TEST_ENV=dind: Setting up Docker-in-Docker container")
     
     # Create Docker-in-Docker container
-    # Using dind variant without TLS for simplicity in tests
     container = DockerContainer("docker:29-dind")
-    container.with_kwargs(privileged=True)  # Required for Docker-in-Docker
-    container.with_exposed_ports(2375)  # Docker daemon port (non-TLS)
-    # Disable TLS for simplicity (DOCKER_TLS_CERTDIR not set)
-    container.with_env("DOCKER_TLS_CERTDIR", "")
-    
+    container.with_kwargs(privileged=True)
+    container.with_exposed_ports(2375)
+    container.with_env("DOCKER_TLS_CERTDIR", "")  # Disable TLS for simplicity
     container.start()
     
-    # Wait for Docker daemon to be ready
+    # Get connection details
     container_host = container.get_container_host_ip()
     container_port = container.get_exposed_port(2375)
-    docker_host = f"tcp://{container_host}:{container_port}"
+    docker_host_url = f"tcp://{container_host}:{container_port}"
+    
+    # Set DOCKER_HOST environment variable for all tests
+    os.environ["DOCKER_HOST"] = docker_host_url
     
     # Wait for Docker daemon to be ready
     logging.info("Waiting for Docker daemon to start...")
-    time.sleep(5)  # Initial wait for daemon to start
+    time.sleep(5)
     max_retries = 60
     retry_delay = 2
+    
     for attempt in range(max_retries):
         try:
-            # Test connection to Docker daemon using Docker API
-            client = _get_docker_client(docker_host)
+            client = _get_docker_client(docker_host_url)
             client.info()
-            # Also verify we can actually use the daemon by listing containers
             client.containers.list(all=True)
-            # One more test - try to pull a small image to ensure daemon is fully operational
-            client.images.pull("alpine:latest")
             logging.info(f"Docker daemon ready after {attempt + 1} attempts")
             break
         except Exception as e:
@@ -221,135 +216,150 @@ def docker_dind_container():
                     logging.info(f"Waiting for Docker daemon... attempt {attempt + 1}/{max_retries}: {e}")
                 time.sleep(retry_delay)
             else:
-                logging.error(f"Docker daemon did not become ready: {e}")
                 raise Exception(f"Docker daemon did not become ready in time: {e}")
     
-    # Additional wait to ensure daemon is fully stable
-    time.sleep(3)
-    
-    yield {
-        "container": container,
-        "docker_host": docker_host,
-    }
+    yield docker_host_url
     
     # Cleanup
     try:
         container.stop()
-    except Exception:
-        pass
-    try:
         container.remove()
     except Exception:
         pass
-
-
-@pytest.fixture(scope="function")
-def docker_host_env(docker_dind_container, monkeypatch):
-    """
-    Fixture that sets DOCKER_HOST environment variable appropriately.
-    - If using host Docker: doesn't set DOCKER_HOST (uses default)
-    - If using Docker-in-Docker: sets DOCKER_HOST to point to the containerized daemon.
     
-    This makes all docker commands use the appropriate Docker daemon.
+    # Restore original DOCKER_HOST
+    if original_docker_host:
+        os.environ["DOCKER_HOST"] = original_docker_host
+    elif "DOCKER_HOST" in os.environ:
+        del os.environ["DOCKER_HOST"]
+
+
+@pytest.fixture(scope="module")
+def docker_environment(docker_host):
     """
-    if docker_dind_container is None:
-        # Using host Docker, don't set DOCKER_HOST (use default)
-        # Remove DOCKER_HOST if it was set previously
-        monkeypatch.delenv("DOCKER_HOST", raising=False)
-        yield None  # None indicates host Docker
-    else:
-        # Using Docker-in-Docker, set DOCKER_HOST to containerized daemon
-        docker_host = docker_dind_container["docker_host"]
-        monkeypatch.setenv("DOCKER_HOST", docker_host)
+    Step 2: Validate Docker environment is working by running a health-check container.
+    
+    This fixture ensures the Docker daemon is fully operational by:
+    1. Pulling an image (tests image pulling)
+    2. Creating a container with healthcheck (tests container creation)
+    3. Verifying the container becomes healthy (tests container lifecycle)
+    
+    This is the only fixture tests need to depend on - it guarantees Docker is ready.
+    """
+    logging.info("Validating Docker environment with health-check container")
+    
+    validation_container_name = f"docker-env-validation-{int(time.time() * 1000000)}"
+    
+    try:
+        client = _get_docker_client(docker_host)
+        
+        # Pull image - validates daemon can pull images
+        logging.info("Pulling nginx:alpine image for validation")
+        client.images.pull("nginx:alpine")
+        
+        # Pull alpine too since tests will use it
+        logging.info("Pulling alpine:latest image for tests")
+        client.images.pull("alpine:latest")
+        
+        # Create and start container with healthcheck
+        logging.info(f"Creating validation container: {validation_container_name}")
+        container = client.containers.create(
+            image="nginx:alpine",
+            name=validation_container_name,
+            detach=True,
+            healthcheck={
+                'test': ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost/ || exit 1'],
+                'interval': 1000000000,  # 1s in nanoseconds
+                'timeout': 500000000,  # 500ms in nanoseconds
+                'retries': 3,
+                'start_period': 3000000000  # 3s in nanoseconds
+            }
+        )
+        container.start()
+        
+        # Wait for container to become healthy
+        logging.info("Waiting for validation container to become healthy")
+        max_wait = 30
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            container.reload()
+            health_status = container.attrs.get('State', {}).get('Health', {}).get('Status')
+            
+            if health_status == 'healthy':
+                logging.info("✓ Docker environment validated successfully")
+                break
+            elif health_status in ['starting', None]:
+                time.sleep(1)
+                continue
+            else:
+                raise Exception(f"Validation container unhealthy: {health_status}")
+        else:
+            raise Exception(f"Validation container did not become healthy within {max_wait}s")
+        
+        # Docker environment is ready - yield control to tests
         yield docker_host
+        
+    finally:
+        # Cleanup validation container
+        logging.info("Cleaning up validation container")
+        _cleanup_container(docker_host, validation_container_name)
 
 
 @pytest.fixture(scope="function")
-def test_container(docker_dind_container, docker_host_env):
+def test_container(docker_environment):
     """
-    Fixture that provides a test container running in the Docker environment.
-    Uses the configured Docker daemon (host Docker by default, or Docker-in-Docker if specified).
-    Uses a lightweight Alpine Linux container that can be started/stopped.
+    Helper fixture: Creates a simple Alpine container for tests that need one.
+    
+    Most tests can create their own containers using _get_docker_client(docker_environment).
+    This fixture is provided for convenience.
     """
-    # Create a container in the Docker environment
     container_name = f"test-container-{int(time.time() * 1000000)}"
     
-    # Run container with retries, using Docker API
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            client = _get_docker_client(docker_host_env)
-            # Pull image first
-            client.images.pull("alpine:latest")
-            # Create and start container
-            container = client.containers.create(
-                image="alpine:latest",
-                name=container_name,
-                command=["tail", "-f", "/dev/null"],
-                detach=True
-            )
-            container.start()
-            break
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)
-            else:
-                pytest.fail(f"Failed to create test container after {max_retries} attempts: {str(e)}")
-    
-    # Reduced wait - container creation is synchronous, brief wait for state to settle
-    time.sleep(0.5)
+    client = _get_docker_client(docker_environment)
+    container = client.containers.create(
+        image="alpine:latest",
+        name=container_name,
+        command=["tail", "-f", "/dev/null"],
+        detach=True
+    )
+    container.start()
+    time.sleep(0.5)  # Brief wait for container to be fully started
     
     yield container_name
     
-    # Cleanup: ensure container is stopped and removed
-    _cleanup_container(docker_host_env, container_name)
+    _cleanup_container(docker_environment, container_name)
 
 
 @pytest.fixture(scope="function")
-def container_with_healthcheck(docker_dind_container, docker_host_env):
+def container_with_healthcheck(docker_environment):
     """
-    Fixture that provides a container with healthcheck configured.
-    Uses the configured Docker daemon (host Docker by default, or Docker-in-Docker if specified).
-    Uses nginx which can have a healthcheck configured.
+    Helper fixture: Creates an nginx container with healthcheck for tests that need one.
+    
+    Most tests can create their own containers using _get_docker_client(docker_environment).
+    This fixture is provided for convenience.
     """
     container_name = f"healthcheck-container-{int(time.time() * 1000000)}"
     
-    # Create nginx container with healthcheck from the start using Docker API
-    max_retries = 5
-    for attempt in range(max_retries):
-        try:
-            client = _get_docker_client(docker_host_env)
-            # Pull image first
-            client.images.pull("nginx:alpine")
-            # Create container with healthcheck
-            container = client.containers.create(
-                image="nginx:alpine",
-                name=container_name,
-                detach=True,
-                healthcheck={
-                    'test': ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost/ || exit 1'],
-                    'interval': 1000000000,  # 1s in nanoseconds
-                    'timeout': 500000000,  # 500ms in nanoseconds
-                    'retries': 3,
-                    'start_period': 5000000000  # 5s in nanoseconds
-                }
-            )
-            container.start()
-            break
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)
-            else:
-                pytest.fail(f"Failed to create healthcheck container after {max_retries} attempts: {str(e)}")
-    
-    # Reduced wait - container starts quickly, healthcheck has its own start period (5s)
-    # We only need to wait for container to be created, not for healthcheck to complete
-    time.sleep(2)
+    client = _get_docker_client(docker_environment)
+    container = client.containers.create(
+        image="nginx:alpine",
+        name=container_name,
+        detach=True,
+        healthcheck={
+            'test': ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost/ || exit 1'],
+            'interval': 1000000000,  # 1s in nanoseconds
+            'timeout': 500000000,  # 500ms in nanoseconds
+            'retries': 3,
+            'start_period': 5000000000  # 5s in nanoseconds
+        }
+    )
+    container.start()
+    time.sleep(2)  # Wait for healthcheck to initialize
     
     yield container_name
     
-    # Cleanup
-    _cleanup_container(docker_host_env, container_name)
+    _cleanup_container(docker_environment, container_name)
 
 
 # ============================================================================
@@ -359,10 +369,10 @@ def container_with_healthcheck(docker_dind_container, docker_host_env):
 class TestStopNodeIntegration:
     """Integration tests for stop_node function"""
     
-    def test_returns_true_when_stop_succeeds(self, test_container, docker_host_env, caplog):
+    def test_returns_true_when_stop_succeeds(self, test_container, docker_environment, caplog):
         """returns True when docker stop command succeeds on real container"""
         # Ensure container is running first
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(test_container)
         container.start()
         
@@ -376,7 +386,7 @@ class TestStopNodeIntegration:
         container.reload()
         assert container.attrs['State']['Running'] is False
     
-    def test_returns_false_when_container_not_found(self, docker_host_env, caplog):
+    def test_returns_false_when_container_not_found(self, docker_environment, caplog):
         """returns False when trying to stop non-existent container"""
         nonexistent = "nonexistent-container-12345"
         
@@ -394,10 +404,10 @@ class TestStopNodeIntegration:
 class TestStartNodeIntegration:
     """Integration tests for start_node function"""
     
-    def test_returns_true_when_start_succeeds(self, test_container, docker_host_env, caplog):
+    def test_returns_true_when_start_succeeds(self, test_container, docker_environment, caplog):
         """returns True when docker start command succeeds on real container"""
         # First stop the container
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(test_container)
         container.stop(timeout=30)
         
@@ -411,7 +421,7 @@ class TestStartNodeIntegration:
         container.reload()
         assert container.attrs['State']['Running'] is True
     
-    def test_returns_false_when_container_not_found(self, docker_host_env, caplog):
+    def test_returns_false_when_container_not_found(self, docker_environment, caplog):
         """returns False when trying to start non-existent container"""
         nonexistent = "nonexistent-container-12345"
         
@@ -429,13 +439,13 @@ class TestStartNodeIntegration:
 class TestGetContainerHealthStatusIntegration:
     """Integration tests for get_container_health_status function"""
     
-    def test_returns_health_status_when_available(self, container_with_healthcheck, docker_host_env):
+    def test_returns_health_status_when_available(self, container_with_healthcheck, docker_environment):
         """returns health status when container has healthcheck configured"""
         # Wait for healthcheck to begin
         time.sleep(3)
         
         # Verify healthcheck is actually configured by checking directly
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(container_with_healthcheck)
         container.reload()
         
@@ -456,7 +466,7 @@ class TestGetContainerHealthStatusIntegration:
         
         assert result is None
     
-    def test_strips_whitespace_from_status(self, container_with_healthcheck, docker_host_env):
+    def test_strips_whitespace_from_status(self, container_with_healthcheck, docker_environment):
         """strips whitespace from health status"""
         # Reduced sleep - fixture already waits, we just need a brief moment for status to be available
         time.sleep(1)
@@ -475,7 +485,7 @@ class TestGetContainerHealthStatusIntegration:
 class TestWaitForContainerHealthyIntegration:
     """Integration tests for wait_for_container_healthy function"""
     
-    def test_returns_true_when_container_becomes_healthy(self, container_with_healthcheck, docker_host_env, caplog):
+    def test_returns_true_when_container_becomes_healthy(self, container_with_healthcheck, docker_environment, caplog):
         """returns True when container becomes healthy"""
         with caplog.at_level(logging.INFO):
             result = wait_for_container_healthy(container_with_healthcheck, max_wait=60)
@@ -484,10 +494,10 @@ class TestWaitForContainerHealthyIntegration:
         assert result is True
         assert container_with_healthcheck in caplog.text
     
-    def test_returns_true_when_no_healthcheck_but_container_running(self, test_container, docker_host_env, caplog):
+    def test_returns_true_when_no_healthcheck_but_container_running(self, test_container, docker_environment, caplog):
         """returns True when no healthcheck but container is running"""
         # Ensure container is running
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(test_container)
         container.start()
         
@@ -497,7 +507,7 @@ class TestWaitForContainerHealthyIntegration:
         assert result is True
         assert "running (no healthcheck configured)" in caplog.text
     
-    def test_returns_false_when_container_not_found(self, docker_host_env, caplog):
+    def test_returns_false_when_container_not_found(self, docker_environment, caplog):
         """returns False when container does not exist"""
         nonexistent = "nonexistent-container-12345"
         
@@ -541,10 +551,10 @@ class TestGetContainerIPIntegration:
 class TestComplexScenariosIntegration:
     """Integration tests for complex container management scenarios"""
     
-    def test_stop_then_start_same_container(self, test_container, docker_host_env, caplog):
+    def test_stop_then_start_same_container(self, test_container, docker_environment, caplog):
         """handles stopping and then starting the same container"""
         # Ensure container is running
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(test_container)
         container.start()
         
@@ -590,14 +600,14 @@ class TestBugMagnetEdgeCasesIntegration:
     # String Edge Cases: Container Names
     # ========================================================================
     
-    def test_handles_very_long_container_name(self, docker_host_env, caplog):
+    def test_handles_very_long_container_name(self, docker_environment, caplog):
         """handles container names at system limits (255+ characters)"""
         very_long_name = "a" * 200  # Docker has limits, use reasonable length
         container_name = f"test-{very_long_name}"
         
         # Create container with long name using Docker API
         try:
-            client = _get_docker_client(docker_host_env)
+            client = _get_docker_client(docker_environment)
             client.images.pull("alpine:latest")
             container = client.containers.create(
                 image="alpine:latest",
@@ -615,13 +625,13 @@ class TestBugMagnetEdgeCasesIntegration:
             pytest.skip(f"Could not create container with long name: {str(e)}")
         finally:
             # Cleanup
-            _cleanup_container(docker_host_env, container_name)
+            _cleanup_container(docker_environment, container_name)
     
     # ========================================================================
     # Error Condition Edge Cases
     # ========================================================================
     
-    def test_handles_nonexistent_container_gracefully(self, docker_host_env, caplog):
+    def test_handles_nonexistent_container_gracefully(self, docker_environment, caplog):
         """handles operations on non-existent containers without crashing"""
         nonexistent = f"nonexistent-container-{int(time.time() * 1000000)}"
         
@@ -640,10 +650,10 @@ class TestBugMagnetEdgeCasesIntegration:
     # Timeout and Performance Edge Cases
     # ========================================================================
     
-    def test_wait_for_container_healthy_with_short_timeout(self, test_container, docker_host_env, caplog):
+    def test_wait_for_container_healthy_with_short_timeout(self, test_container, docker_environment, caplog):
         """handles very short timeout values correctly"""
         # Ensure container is running
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         container = client.containers.get(test_container)
         container.start()
         
@@ -700,9 +710,9 @@ class TestBugMagnetEdgeCasesIntegration:
     # Multiple Container Operations
     # ========================================================================
     
-    def test_handles_multiple_containers_simultaneously(self, docker_host_env, caplog):
+    def test_handles_multiple_containers_simultaneously(self, docker_environment, caplog):
         """handles operations on multiple containers at the same time"""
-        client = _get_docker_client(docker_host_env)
+        client = _get_docker_client(docker_environment)
         containers = []
         
         # Create multiple containers using Docker API
@@ -735,5 +745,5 @@ class TestBugMagnetEdgeCasesIntegration:
         finally:
             # Cleanup
             for container_name in containers:
-                _cleanup_container(docker_host_env, container_name)
+                _cleanup_container(docker_environment, container_name)
     
