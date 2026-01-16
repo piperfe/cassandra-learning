@@ -150,16 +150,18 @@ pytest tests/repository/test_cassandra_repository_integration.py -v
 
 3. **Run the experiment:**
    ```bash
-   # Option 1: Run directly (if you have Python and cassandra-driver installed locally)
+   # Option 1: Run directly (if you have Python and required packages installed locally)
+   pip install -r ../requirements.txt
    python src/application/eventual_consistency_experiment.py
    
    # Option 2: Run in a Docker container
    docker run --rm \
      --network cassandra-eventual-consistency_default \
      -v $(pwd):/app \
+     -v /var/run/docker.sock:/var/run/docker.sock \
      -w /app \
      python:3.11 \
-     bash -c "pip install -q cassandra-driver && python src/application/eventual_consistency_experiment.py"
+     bash -c "apt-get update -qq && apt-get install -y -qq docker.io > /dev/null 2>&1 && pip install -q cassandra-driver mmh3 docker && python src/application/eventual_consistency_experiment.py"
    ```
 
 4. **View results:**
@@ -272,8 +274,9 @@ docker-compose down -v
 
 - The experiment uses `ConsistencyLevel.ONE` for both reads and writes
 - The script automatically identifies which node holds the data using Cassandra's token mapping
-- The node is stopped using `docker stop`, simulating node unavailability
+- The node is stopped using Docker Python API (docker-py), simulating node unavailability
 - The script waits 10 seconds after stopping the node for the cluster to detect the failure
 - After restarting the node, the script waits for the container to become healthy (up to 180 seconds) and verifies the node is recognized by the cluster
 - The experiment demonstrates both data unavailability (when node is down) and data persistence (when node restarts)
+- Container management operations use the Docker Python SDK instead of subprocess calls for better reliability and error handling
 

@@ -187,9 +187,13 @@ See [eventual-consistency-experiment/README.md](eventual-consistency-experiment/
 
 ---
 
-## Notes
+## Technical Notes
 
+### Infrastructure
 - Each experiment is self-contained in its own directory
 - Both experiments can run simultaneously without conflicts
 - Each experiment has its own Docker volumes for data persistence
 - The experiments use different container names and networks to avoid conflicts
+
+### Recent Updates
+- **Container Management Refactor** (Jan 2026): The eventual consistency experiment now uses Docker Python API instead of subprocess calls for better reliability and error handling

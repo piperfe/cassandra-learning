@@ -29,7 +29,6 @@ import os
 import docker
 import tempfile
 import json
-import subprocess
 
 try:
     from testcontainers.core.container import DockerContainer
@@ -44,7 +43,6 @@ import sys
 # Add parent directory and src directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.infrastructure.container_manager import (
-    log_docker_command,
     stop_node,
     start_node,
     get_container_health_status,
@@ -75,35 +73,15 @@ def _get_docker_environment_preference():
 
 
 def _check_host_docker_available():
-    """Check if host Docker daemon is available.
+    """Check if host Docker daemon is available via Python Docker client.
     
-    Checks both subprocess (docker command) and Python Docker client.
-    Both need to work because:
-    - The code under test uses subprocess (docker command)
-    - The test fixtures use Python Docker client to create containers
+    The code under test and test fixtures both use Python Docker client exclusively,
+    so we only need to verify the Python Docker client can connect to the daemon.
     
     Returns:
         tuple: (is_available: bool, docker_host: str or None)
     """
-    # First check if docker command works (what the code under test uses)
-    docker_cmd_works = False
-    try:
-        result = subprocess.run(
-            ["docker", "ps"],
-            capture_output=True,
-            timeout=5,
-            text=True
-        )
-        if result.returncode == 0:
-            docker_cmd_works = True
-            logging.info("Docker command ('docker ps') works")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        logging.info("Docker command not found or timed out")
-    except Exception as e:
-        logging.debug(f"Error checking Docker command: {e}")
-    
-    # Also check if Python Docker client works (what test fixtures need)
-    python_client_works = False
+    # Check if Python Docker client works
     try:
         # Temporarily save DOCKER_CONFIG if it exists
         original_docker_config = os.environ.get('DOCKER_CONFIG')
@@ -114,8 +92,8 @@ def _check_host_docker_available():
             default_client = docker.from_env()
             default_client.info()  # Test connection
             default_client.close()
-            python_client_works = True
-            logging.info("Python Docker client works")
+            logging.info("Python Docker client works - host Docker is available")
+            return True, None
         finally:
             # Restore original DOCKER_CONFIG
             if original_docker_config:
@@ -124,15 +102,6 @@ def _check_host_docker_available():
                 del os.environ['DOCKER_CONFIG']
     except Exception as e:
         logging.debug(f"Python Docker client connection failed: {e}")
-    
-    # Both need to work for host Docker to be usable
-    if docker_cmd_works and python_client_works:
-        logging.info("Host Docker is fully available (both command and Python client work)")
-        return True, None
-    elif docker_cmd_works and not python_client_works:
-        logging.warning("Docker command works but Python client doesn't - will fall back to Docker-in-Docker")
-        return False, None
-    else:
         logging.info("Host Docker is not available")
         return False, None
 
@@ -381,30 +350,6 @@ def container_with_healthcheck(docker_dind_container, docker_host_env):
     
     # Cleanup
     _cleanup_container(docker_host_env, container_name)
-
-
-# ============================================================================
-# Test: log_docker_command
-# ============================================================================
-
-class TestLogDockerCommandIntegration:
-    """Integration tests for log_docker_command function"""
-    
-    def test_logs_command_with_real_container(self, test_container, caplog):
-        """logs docker command correctly when cmd is a string with real container"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("stop", test_container)
-        
-        assert "Docker Command: docker stop" in caplog.text
-        assert test_container in caplog.text
-    
-    def test_logs_command_with_list_cmd(self, test_container, caplog):
-        """logs docker command correctly when cmd is a list"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command(["stop"], test_container)
-        
-        assert "Docker Command: docker stop" in caplog.text
-        assert test_container in caplog.text
 
 
 # ============================================================================
@@ -792,27 +737,3 @@ class TestBugMagnetEdgeCasesIntegration:
             for container_name in containers:
                 _cleanup_container(docker_host_env, container_name)
     
-    # ========================================================================
-    # Log Command Edge Cases
-    # ========================================================================
-    
-    def test_logs_command_with_empty_string(self, caplog):
-        """logs docker command correctly when args is empty string"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("stop", "")
-        
-        assert "Docker Command: docker stop" in caplog.text
-    
-    def test_logs_command_with_no_args(self, caplog):
-        """logs docker command correctly when no args provided"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("ps")
-        
-        assert "Docker Command: docker ps" in caplog.text
-    
-    def test_logs_command_with_list_args(self, caplog):
-        """logs docker command correctly when args is a list"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("exec", ["-it", "container-name", "bash"])
-        
-        assert "Docker Command: docker exec -it container-name bash" in caplog.text

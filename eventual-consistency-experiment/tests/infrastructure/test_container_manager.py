@@ -11,8 +11,8 @@ For integration tests against real Docker containers, see:
 """
 
 import logging
-import subprocess
 from unittest.mock import patch, MagicMock
+import docker
 
 # Import the module under test
 import sys
@@ -20,54 +20,11 @@ import os
 # Add parent directory and src directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.infrastructure.container_manager import (
-    log_docker_command,
     stop_node,
     start_node,
     get_container_health_status,
     wait_for_container_healthy,
 )
-
-
-# ============================================================================
-# Test: log_docker_command
-# ============================================================================
-
-class TestLogDockerCommand:
-    """Tests for log_docker_command function
-    
-    Note: Basic functionality is tested in integration tests.
-    These unit tests focus on edge cases and error conditions.
-    """
-    
-    def test_logs_command_with_list_args(self, caplog):
-        """logs docker command correctly when args is a list"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("exec", ["-it", "container-name", "bash"])
-        
-        assert "Docker Command: docker exec -it container-name bash" in caplog.text
-    
-    def test_logs_command_with_no_args(self, caplog):
-        """logs docker command correctly when no args provided"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("ps")
-        
-        assert "Docker Command: docker ps" in caplog.text
-    
-    def test_logs_command_with_empty_string_args(self, caplog):
-        """logs docker command correctly when args is empty string"""
-        with caplog.at_level(logging.INFO):
-            log_docker_command("stop", "")
-        
-        # Empty string is falsy, so it won't be appended
-        assert "Docker Command: docker stop" in caplog.text
-    
-    def test_logs_command_with_special_characters_in_args(self, caplog):
-        """logs docker command correctly when args contain special characters"""
-        with caplog.at_level(logging.INFO):
-            # log_docker_command only takes 2 args: cmd and args
-            log_docker_command("exec", ["container-name", "echo", "'hello world'"])
-        
-        assert "Docker Command: docker exec container-name echo 'hello world'" in caplog.text
 
 
 # ============================================================================
@@ -81,11 +38,12 @@ class TestStopNode:
     These unit tests focus on error handling and edge cases.
     """
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_handles_subprocess_exception(self, mock_log, mock_run, caplog):
-        """handles subprocess exceptions gracefully"""
-        mock_run.side_effect = subprocess.TimeoutExpired("docker", 30)
+    @patch('docker.from_env')
+    def test_handles_docker_api_exception(self, mock_docker, caplog):
+        """handles Docker API exceptions gracefully"""
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = Exception("Connection error")
         
         with caplog.at_level(logging.ERROR):
             result = stop_node("test-container")
@@ -93,23 +51,31 @@ class TestStopNode:
         assert result is False
         assert "Error stopping container test-container" in caplog.text
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_calls_docker_stop_with_correct_args(self, mock_log, mock_run):
-        """calls docker stop with correct arguments"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+    @patch('docker.from_env')
+    def test_handles_container_not_found(self, mock_docker, caplog):
+        """handles container not found errors"""
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = docker.errors.NotFound("Container not found")
+        
+        with caplog.at_level(logging.ERROR):
+            result = stop_node("test-container")
+        
+        assert result is False
+        assert "Failed to stop test-container" in caplog.text
+    
+    @patch('docker.from_env')
+    def test_calls_docker_api_stop_with_correct_timeout(self, mock_docker):
+        """calls Docker API stop with correct timeout"""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
         
         stop_node("my-container")
         
-        mock_run.assert_called_once_with(
-            ["docker", "stop", "my-container"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        mock_client.containers.get.assert_called_once_with("my-container")
+        mock_container.stop.assert_called_once_with(timeout=30)
 
 
 # ============================================================================
@@ -123,11 +89,12 @@ class TestStartNode:
     These unit tests focus on error handling and edge cases.
     """
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_handles_subprocess_exception(self, mock_log, mock_run, caplog):
-        """handles subprocess exceptions gracefully"""
-        mock_run.side_effect = subprocess.TimeoutExpired("docker", 30)
+    @patch('docker.from_env')
+    def test_handles_docker_api_exception(self, mock_docker, caplog):
+        """handles Docker API exceptions gracefully"""
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = Exception("Connection error")
         
         with caplog.at_level(logging.ERROR):
             result = start_node("test-container")
@@ -135,23 +102,31 @@ class TestStartNode:
         assert result is False
         assert "Error starting container test-container" in caplog.text
     
-    @patch('subprocess.run')
-    @patch('src.infrastructure.container_manager.log_docker_command')
-    def test_calls_docker_start_with_correct_args(self, mock_log, mock_run):
-        """calls docker start with correct arguments"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stderr = ""
-        mock_run.return_value = mock_result
+    @patch('docker.from_env')
+    def test_handles_container_not_found(self, mock_docker, caplog):
+        """handles container not found errors"""
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = docker.errors.NotFound("Container not found")
+        
+        with caplog.at_level(logging.ERROR):
+            result = start_node("test-container")
+        
+        assert result is False
+        assert "Failed to start test-container" in caplog.text
+    
+    @patch('docker.from_env')
+    def test_calls_docker_api_start(self, mock_docker):
+        """calls Docker API start method"""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
         
         start_node("my-container")
         
-        mock_run.assert_called_once_with(
-            ["docker", "start", "my-container"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        mock_client.containers.get.assert_called_once_with("my-container")
+        mock_container.start.assert_called_once()
 
 
 # ============================================================================
@@ -165,50 +140,68 @@ class TestGetContainerHealthStatus:
     These unit tests focus on edge cases and error conditions.
     """
     
-    @patch('subprocess.run')
-    def test_handles_exception_gracefully(self, mock_run):
+    @patch('docker.from_env')
+    def test_handles_exception_gracefully(self, mock_docker):
         """handles exceptions gracefully and returns None"""
-        mock_run.side_effect = Exception("Connection error")
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = Exception("Connection error")
         
         result = get_container_health_status("test-container")
         
         assert result is None
     
-    @patch('subprocess.run')
-    def test_strips_whitespace_from_status(self, mock_run):
-        """strips whitespace from health status"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "  healthy  \n"
-        mock_run.return_value = mock_result
+    @patch('docker.from_env')
+    def test_returns_healthy_status(self, mock_docker):
+        """returns healthy status correctly"""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
+        mock_container.attrs = {'State': {'Health': {'Status': 'healthy'}}}
         
         result = get_container_health_status("test-container")
         
         assert result == "healthy"
     
-    @patch('subprocess.run')
-    def test_returns_unhealthy_status(self, mock_run):
+    @patch('docker.from_env')
+    def test_returns_unhealthy_status(self, mock_docker):
         """returns unhealthy status correctly"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "unhealthy\n"
-        mock_run.return_value = mock_result
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
+        mock_container.attrs = {'State': {'Health': {'Status': 'unhealthy'}}}
         
         result = get_container_health_status("test-container")
         
         assert result == "unhealthy"
     
-    @patch('subprocess.run')
-    def test_returns_starting_status(self, mock_run):
+    @patch('docker.from_env')
+    def test_returns_starting_status(self, mock_docker):
         """returns starting status correctly"""
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "starting\n"
-        mock_run.return_value = mock_result
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
+        mock_container.attrs = {'State': {'Health': {'Status': 'starting'}}}
         
         result = get_container_health_status("test-container")
         
         assert result == "starting"
+    
+    @patch('docker.from_env')
+    def test_returns_none_when_no_health_section(self, mock_docker):
+        """returns None when container has no health section"""
+        mock_client = MagicMock()
+        mock_container = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.return_value = mock_container
+        mock_container.attrs = {'State': {}}
+        
+        result = get_container_health_status("test-container")
+        
+        assert result is None
 
 
 # ============================================================================
@@ -268,8 +261,8 @@ class TestWaitForContainerHealthy:
     @patch('src.infrastructure.container_manager.time.sleep')
     @patch('src.infrastructure.container_manager.time.time')
     @patch('src.infrastructure.container_manager.get_container_health_status')
-    @patch('subprocess.run')
-    def test_handles_exception_when_checking_running_status(self, mock_run, mock_get_status, mock_time, mock_sleep, caplog):
+    @patch('docker.from_env')
+    def test_handles_exception_when_checking_running_status(self, mock_docker, mock_get_status, mock_time, mock_sleep, caplog):
         """handles exception when checking if container is running"""
         mock_get_status.return_value = None  # No healthcheck
         
@@ -282,7 +275,9 @@ class TestWaitForContainerHealthy:
         mock_time.side_effect = time_side_effect
         
         # Mock exception when checking running status
-        mock_run.side_effect = Exception("Connection error")
+        mock_client = MagicMock()
+        mock_docker.return_value = mock_client
+        mock_client.containers.get.side_effect = Exception("Connection error")
         
         with caplog.at_level(logging.WARNING):
             result = wait_for_container_healthy("test-container", max_wait=180)
@@ -304,60 +299,60 @@ class TestDockerEdgeCases:
     def test_handles_very_long_container_name(self, caplog):
         """handles container names at system limits (255+ characters)"""
         very_long_name = "a" * 255
-        with patch('subprocess.run') as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_run.return_value = mock_result
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_container = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.return_value = mock_container
             
             with caplog.at_level(logging.INFO):
                 result = stop_node(very_long_name)
             
             assert result is True
-            # Verify the long name was used in the command
-            mock_run.assert_called_once()
-            call_args = mock_run.call_args[0][0]
-            assert very_long_name in call_args
+            # Verify the long name was used in the Docker API call
+            mock_client.containers.get.assert_called_once_with(very_long_name)
     
     def test_handles_container_name_with_special_characters(self, caplog):
         """handles container names with special characters that might break shell commands"""
         special_chars = "test-container_123.456"
-        with patch('subprocess.run') as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_run.return_value = mock_result
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_container = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.return_value = mock_container
             
             with caplog.at_level(logging.INFO):
                 result = stop_node(special_chars)
             
             assert result is True
-            # Verify subprocess.run was called (it handles special chars safely)
-            mock_run.assert_called_once()
+            # Verify Docker API was called (it handles special chars safely)
+            mock_client.containers.get.assert_called_once_with(special_chars)
     
     def test_handles_container_name_with_unicode(self, caplog):
         """handles container names with unicode characters"""
         unicode_name = "cassandra-node-测试"
-        with patch('subprocess.run') as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_run.return_value = mock_result
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_container = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.return_value = mock_container
             
             with caplog.at_level(logging.INFO):
                 result = stop_node(unicode_name)
             
             assert result is True
-            mock_run.assert_called_once()
+            mock_client.containers.get.assert_called_once_with(unicode_name)
     
     # ========================================================================
     # Error Condition Edge Cases
     # ========================================================================
     
-    def test_handles_subprocess_timeout_exception(self, caplog):
-        """handles subprocess timeout exceptions specifically"""
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired("docker", 30)
+    def test_handles_docker_api_timeout_exception(self, caplog):
+        """handles Docker API timeout exceptions specifically"""
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.side_effect = Exception("Timeout occurred")
             
             with caplog.at_level(logging.ERROR):
                 result = stop_node("test-container")
@@ -365,10 +360,12 @@ class TestDockerEdgeCases:
             assert result is False
             assert "Error stopping container test-container" in caplog.text
     
-    def test_handles_subprocess_called_process_error(self, caplog):
-        """handles subprocess CalledProcessError exceptions"""
-        with patch('subprocess.run') as mock_run:
-            mock_run.side_effect = subprocess.CalledProcessError(1, "docker", "Error")
+    def test_handles_docker_api_error(self, caplog):
+        """handles Docker API errors"""
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.side_effect = docker.errors.APIError("API Error")
             
             with caplog.at_level(logging.ERROR):
                 result = stop_node("test-container")
@@ -386,11 +383,11 @@ class TestDockerEdgeCases:
         """handles multiple container operations on different containers"""
         containers = ["container1", "container2", "container3"]
         
-        with patch('subprocess.run') as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_run.return_value = mock_result
+        with patch('docker.from_env') as mock_docker:
+            mock_client = MagicMock()
+            mock_container = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_client.containers.get.return_value = mock_container
             
             results = []
             for container in containers:
@@ -398,45 +395,27 @@ class TestDockerEdgeCases:
                     results.append(stop_node(container))
             
             assert all(results)
-            assert mock_run.call_count == 3
-    
-    # ========================================================================
-    # Docker Command Edge Cases
-    # ========================================================================
-    
-    def test_logs_docker_command_with_very_long_args_list(self, caplog):
-        """handles docker commands with very long argument lists"""
-        long_args = ["arg" + str(i) for i in range(100)]
-        
-        with caplog.at_level(logging.INFO):
-            log_docker_command("run", long_args)
-        
-        assert "Docker Command:" in caplog.text
-        # Should log the command even with many args
+            assert mock_client.containers.get.call_count == 3
     
     # ========================================================================
     # Health Status Edge Cases
     # ========================================================================
     
-    def test_handles_health_status_with_extra_whitespace_variations(self, caplog):
-        """handles health status with various whitespace patterns"""
-        whitespace_variations = [
-            "\thealthy\t",
-            "\nhealthy\n",
-            "\r\nhealthy\r\n",
-            "  healthy  ",
-            "\t\n\r healthy \r\n\t"
-        ]
+    def test_handles_health_status_from_docker_api(self, caplog):
+        """handles health status from Docker API correctly"""
+        # Docker API returns clean status strings without whitespace
+        status_values = ["healthy", "unhealthy", "starting"]
         
-        for status_output in whitespace_variations:
-            with patch('subprocess.run') as mock_run:
-                mock_result = MagicMock()
-                mock_result.returncode = 0
-                mock_result.stdout = status_output
-                mock_run.return_value = mock_result
+        for status in status_values:
+            with patch('docker.from_env') as mock_docker:
+                mock_client = MagicMock()
+                mock_container = MagicMock()
+                mock_docker.return_value = mock_client
+                mock_client.containers.get.return_value = mock_container
+                mock_container.attrs = {'State': {'Health': {'Status': status}}}
                 
                 result = get_container_health_status("test-container")
                 
-                # Should strip all whitespace and return "healthy"
-                assert result == "healthy"
+                # Should return the status as-is from Docker API
+                assert result == status
 
